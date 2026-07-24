@@ -1,0 +1,8 @@
+.key
+__pycache__/
+sessions/
+cache/
+work/
+workspace/
+*.pyc
+.secrets.enc

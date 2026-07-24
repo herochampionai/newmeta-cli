@@ -1,0 +1,36 @@
+19: from textual.widgets import Footer, Header, Static, ProgressBar, Sparkline, Button, Rule
+72: def render_histogram(data: list[float], width: int = 20) -> str:
+116: yield Sparkline(data=list(self.history), summary_function=max)
+117: yield Button("⚡ CLEAN CPU", id="opt-cpu", classes="opt-btn")
+134: self.query_one(Sparkline).data = list(self.history)
+150: yield Sparkline(data=list(self.history), summary_function=max)
+151: yield Button("⚡ CLEAN RAM", id="opt-mem", classes="opt-btn")
+174: spark.data = list(self.history)
+208: yield Sparkline(data=list(self.history), summary_function=max)
+209: yield Button("⚡ CLEAN GPU", id="opt-gpu", classes="opt-btn")
+242: spark.data = list(self.history)
+254: yield Button("⚡ CLEAN NET", id="opt-net", classes="opt-btn")
+300: up_hist = render_histogram(list(self.history_up), 12)
+301: down_hist = render_histogram(list(self.history_down), 12)
+327: self._lines: list[str] = []
+369: yield Button("▶", id=f"btn-resume-{self.slot_id}", classes="btn-resume-small cell-act", disabled=True)
+377: yield Button("⚡ Q  QUIT", id="btn-quit", classes="foot-btn")
+379: yield Button("⚡ O  FULL OPT", id="btn-opt-all", classes="foot-btn")
+381: yield Button("⚡ M  OPT MEM", id="btn-opt-mem", classes="foot-btn")
+383: yield Button("⚡ C  OPT CPU", id="btn-opt-cpu", classes="foot-btn")
+385: yield Button("⚡ N  OPT NET", id="btn-opt-net", classes="foot-btn")
+589: res_oc = subprocess.run(["opencode", "session", "list", "-n", "4"], capture_output=True, text=True, shell=True)
+590: oc_list = []
+594: oc_list.append((time.time(), parts[0]))
+595: self.fetched_opencode = oc_list
+599: res_cd = subprocess.run(["codex", "resume", "--all"], capture_output=True, text=True, shell=True, input="\n")
+600: cd_list = []
+604: if parts: cd_list.append((time.time(), parts[-1]))
+605: if cd_list:
+606: self.fetched_codex = cd_list
+629: btn = self.query_one(f"#btn-resume-{slot_id}", Button)
+709: btn = self.query_one(f"#btn-resume-{slot_id}", Button)
+727: def on_button_pressed(self, event: Button.Pressed) -> None:
+728: btn_id = event.button.id
+757: cmd = "opencode session list -n 10"
+790: btn = panel.query_one(btn_id_map[name], Button)

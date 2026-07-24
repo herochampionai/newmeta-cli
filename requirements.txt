@@ -1,0 +1,15 @@
+openai
+anthropic
+google-genai
+pyyaml
+requests
+PyPDF2
+python-docx
+edge-tts
+whisper
+pyperclip
+Pillow
+opencv-python
+sounddevice
+numpy
+cryptography
