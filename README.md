@@ -1,6 +1,6 @@
 # NewMeta CLI (The Master Agent Router) 🌌
 
-![Terminal Preview](preview.jpg)
+![Terminal Preview](preview.png)
 
 NewMeta CLI is an advanced, ultra-customizable terminal router designed to effortlessly manage, launch, and route tasks between local AI models, web agents, and fully autonomous IDE sandboxes.
 
