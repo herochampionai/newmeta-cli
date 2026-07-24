@@ -1,0 +1,121 @@
+# NewMeta v6.1 - Zero Touch Config
+# Auto-configured for free local AI (no API keys needed)
+
+default_provider: kimifree
+default_model: phi4:latest
+
+# Provider configurations (all free local)
+providers:
+  ollama:
+    enabled: true
+    ollama_url: "http://localhost:11434/api/chat"
+    model: "phi4:latest"           # Best free: 14.7B params
+    deep_model: "phi4:latest"
+    
+  mephissa:
+    enabled: true                  # ALWAYS AVAILABLE
+    ollama_url: "http://localhost:11434/api/chat"
+    model: "qwen2.5-coder:14b"
+    deep_model: "qwen2.5-coder:32b"
+  lmstudio:
+    enabled: true
+    url: "http://localhost:1234/v1/chat/completions"
+    model: "local-model"
+  dsfree:
+    enabled: true
+    url: "http://localhost:22217/v1/chat/completions"
+    model: "deepseek-default"
+  kimifree:
+    enabled: true
+    url: "http://localhost:3000/v1/chat/completions"
+    model: "k2d6"
+    auth_key: "Waguri"
+    # Kimi access token from browser F12 → localStorage → access_token
+    # Set via: newmeta --set-key kimi_token "eyJ..."
+    kimi_token: ""
+  kimi:
+    enabled: true
+    url: "https://api.moonshot.cn/v1/chat/completions"
+    model: "moonshot-v1-128k"
+    # Paid Moonshot API key
+    api_key: "sk-BR1j5IPXjyVIfBluu6dlDJUP3UZ3yewN5nDzwrgjHdVb88Or"
+  kimi-cli:
+    enabled: true
+    path: "C:\\Users\\youha\\.kimi-code\\bin\\kimi.exe"
+    model: "kimi-code/kimi-for-coding"
+
+# Model rankings (best free first)
+model_preferences:
+  - name: "mixtral-8x7b"
+    provider: "ollama"
+    size: "46.7B"
+    use_case: "general,reasoning,coding"
+    rank: 1
+    
+  - name: "phi4:latest"
+    provider: "ollama"
+    size: "14.7B"
+    use_case: "general,reasoning,coding"
+    rank: 2
+    
+  - name: "qwen2.5-coder:32b"
+    provider: "mephissa"
+    size: "32B"
+    use_case: "deep reasoning,coding"
+    rank: 2
+    
+  - name: "qwen2.5-coder:14b"
+    provider: "mephissa"
+    size: "14B"
+    use_case: "coding,fast"
+    rank: 3
+    
+  - name: "glm4:latest"
+    provider: "ollama"
+    size: "9.4B"
+    use_case: "coding,chat"
+    rank: 4
+    
+  - name: "llama3.2:latest"
+    provider: "ollama"
+    size: "3.2B"
+    use_case: "fast,lightweight"
+    rank: 5
+
+# Chat settings
+chat:
+
+  show_model: true
+
+# Tools & Plugins
+tools:
+  enabled: true
+
+# Session settings  
+session:
+  auto_save: true
+
+# Fallback chain - online first, then local
+fallback:
+  enabled: true
+  providers: ["openrouter", "lmstudio", "ollama", "mephissa"]
+
+# Routing rules
+routing:
+  simple: true
+  auto_select_best: true
+  rules:
+    - pattern: "code|debug|fix|error|algorithm"
+      provider: "mephissa"
+      model: "deep"
+    - pattern: "explain|what is|how does|why"
+      provider: "ollama"
+    - pattern: "write|create|generate"
+      provider: "ollama"
+
+# Zero-touch mode
+zero_touch:
+  enabled: true
+  auto_detect_ollama: true
+  auto_select_best_model: true
+

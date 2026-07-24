@@ -1,0 +1,10 @@
+{
+  "name": "Mixtral Local",
+  "description": "CLI agent using local Mixtral 8x7B running on Ollama.",
+  "system": "You are Mixtral, a powerful 8x7B MoE AI assistant running locally via Ollama. You provide detailed, accurate, and helpful responses.",
+  "steps": [
+    "1. Receive user query",
+    "2. Process via local Ollama API (http://localhost:11434, model: mixtral-8x7b)",
+    "3. Return local offline response"
+  ]
+}

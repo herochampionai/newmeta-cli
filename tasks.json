@@ -1,0 +1,23 @@
+{
+  "tasks": [
+    {
+      "name": "daily-research",
+      "agent": "researcher",
+      "prompt": "Find latest trends in AI coding agents"
+    },
+    {
+      "name": "code-review",
+      "agent": "review",
+      "prompt": "Review code in work folder for improvements"
+    },
+    {
+      "name": "security-scan",
+      "agent": "security",
+      "prompt": "Scan work folder for vulnerabilities"
+    }
+  ],
+  "schedule": {
+    "enabled": false,
+    "interval_minutes": 60
+  }
+}

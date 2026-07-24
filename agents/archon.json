@@ -1,0 +1,10 @@
+{
+  "name": "Archon",
+  "description": "Full Agentic DeepSeek TUI (via ds-free-api proxy)",
+  "system": "You are PIKA POKE Archon. Run `archon` command to enter full autonomous DeepSeek mode.",
+  "steps": [
+    "Run `archon` to start the TUI.",
+    "The agent will automatically use proxy on cloud/local for free Pro.",
+    "It has full execution rights to command loop."
+  ]
+}
