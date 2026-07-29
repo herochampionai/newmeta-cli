@@ -25,6 +25,10 @@ providers:
     enabled: true
     url: "http://localhost:22217/v1/chat/completions"
     model: "deepseek-default"
+  deepseek:
+    enabled: true
+    model: "deepseek-chat"
+    api_key: ""
   kimifree:
     enabled: true
     url: "http://localhost:3000/v1/chat/completions"
@@ -38,7 +42,7 @@ providers:
     url: "https://api.moonshot.cn/v1/chat/completions"
     model: "moonshot-v1-128k"
     # Paid Moonshot API key
-    api_key: "sk-BR1j5IPXjyVIfBluu6dlDJUP3UZ3yewN5nDzwrgjHdVb88Or"
+    api_key: ""
   kimi-cli:
     enabled: true
     path: "C:\\Users\\youha\\.kimi-code\\bin\\kimi.exe"
@@ -46,9 +50,9 @@ providers:
 
 # Model rankings (best free first)
 model_preferences:
-  - name: "mixtral-8x7b"
+  - name: "qwen2.5-coder:14b"
     provider: "ollama"
-    size: "46.7B"
+    size: "14B"
     use_case: "general,reasoning,coding"
     rank: 1
     
