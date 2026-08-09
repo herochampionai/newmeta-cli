@@ -16,7 +16,7 @@ import psutil
 from textual.app import App, ComposeResult
 from textual import work
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Header, Static, ProgressBar, Sparkline, Button, Rule, DirectoryTree
+from textual.widgets import Footer, Header, Static, ProgressBar, Sparkline, Button, Rule
 from textual.binding import Binding
 
 
@@ -374,17 +374,17 @@ class SessionRow(Horizontal):
 
 class CustomFooter(Horizontal):
     def compose(self) -> ComposeResult:
-        yield Button("⚡ [black on #00f0ff] Q [/] QUIT", id="btn-quit", classes="foot-btn")
+        yield Button("⚡ Q  QUIT", id="btn-quit", classes="foot-btn")
         yield Rule(orientation="vertical", classes="fuchsia-v-splitter")
-        yield Button("⚡ [black on #ccff00] O [/] FULL OPT", id="btn-opt-all", classes="foot-btn")
+        yield Button("⚡ O  FULL OPT", id="btn-opt-all", classes="foot-btn")
         yield Rule(orientation="vertical", classes="fuchsia-v-splitter")
-        yield Button("⚡ [black on #00ff9d] M [/] OPT MEM", id="btn-opt-mem", classes="foot-btn")
+        yield Button("⚡ M  OPT MEM", id="btn-opt-mem", classes="foot-btn")
         yield Rule(orientation="vertical", classes="fuchsia-v-splitter")
-        yield Button("⚡ [black on #ff00ff] C [/] OPT CPU", id="btn-opt-cpu", classes="foot-btn")
+        yield Button("⚡ C  OPT CPU", id="btn-opt-cpu", classes="foot-btn")
         yield Rule(orientation="vertical", classes="fuchsia-v-splitter")
-        yield Button("⚡ [black on yellow] N [/] OPT NET", id="btn-opt-net", classes="foot-btn")
+        yield Button("⚡ N  OPT NET", id="btn-opt-net", classes="foot-btn")
         yield Static("", id="footer-spacer")
-        yield Static(" 🐯🦁 PIKA POKE [Lv.3 Hacker Companion] [#####-----] 1522/3000 XP | 🛡️ Saved: +25.0k (Total: 106.0k) | 0 agents | ctx: 22% | ⚡ Active ", id="pika-poke-footer")
+        yield Static(" 🐯🦁 PIKA POKE | [bold #00f0ff]AGY-GEMINI-2.5-PRO[/] ", id="pika-poke-footer")
 
 
 class Dashboard(App):
@@ -532,10 +532,6 @@ class Dashboard(App):
                     yield NetworkPanel(classes="panel tall")
                     yield Rule(orientation="horizontal", classes="yellow-splitter")
                     yield EventFeed(classes="panel tall", id="event-panel")
-                    yield Rule(orientation="horizontal", classes="yellow-splitter")
-                    with Vertical(classes="panel tall", id="explorer-pane"):
-                        yield Static("📂 Workspace Explorer", classes="panel-title-inline")
-                        yield DirectoryTree(str(BASE_DIR.resolve()), id="file-tree")
             
             yield Rule(orientation="horizontal", classes="fuchsia-splitter")
             yield Static("AGENTIC SESSIONS", classes="main-section-title")

@@ -23,4 +23,9 @@ NewMeta CLI is an advanced, ultra-customizable terminal router designed to effor
    ```
 4. Select your agent by entering its ID (e.g., `41` for THE GOD TIER).
 
+## Agent Launcher Notes
+- Built-in chat providers use `command: ["builtin"]` with `launch: "builtin"` and must be routed through `get_provider(...)`, not `subprocess`.
+- External CLI/desktop agents use real executable commands and remain the only rows launched through `subprocess`.
+- `C*` provider IDs, such as `C9` for Mistral, should select the provider/chat path even when launched from `agents C9 <task>`.
 *Built by the Hacker Archon (PIKA POKE).*
+

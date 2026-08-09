@@ -1,0 +1,6 @@
+{
+  "name": "banner",
+  "description": "Print an ASCII banner for a given word.",
+  "allow_plan": true,
+  "body": "=== BANNER: {{ args }} ===\nReplace this with your own tooling — the engine prints the expanded body."
+}

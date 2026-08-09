@@ -6,3 +6,5 @@ work/
 workspace/
 *.pyc
 .secrets.enc
+venv/
+*.bak

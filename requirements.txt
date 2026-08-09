@@ -13,3 +13,5 @@ opencv-python
 sounddevice
 numpy
 cryptography
+psutil
+yt-dlp

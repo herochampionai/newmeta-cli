@@ -1,0 +1,319 @@
+{
+  "version": "2026-08-03-verified",
+  "verification_method": "Live API calls via web_fetch on 2026-08-03",
+  "description": "Master registry of VERIFIED free AI models. Hallucinated providers removed.",
+
+  "providers": {
+    "sambanova": {
+      "name": "SambaNova Cloud",
+      "type": "inference_provider",
+      "status": "VERIFIED_200",
+      "free_tier": "Unlimited tokens, no API key required",
+      "api_url": "https://api.sambanova.ai/v1",
+      "verified_models": ["DeepSeek-V3.1", "DeepSeek-V3.2", "Meta-Llama-3.3-70B-Instruct", "MiniMax-M2.7", "gemma-4-31B-it", "gpt-oss-120b"],
+      "data_privacy": "Unknown — assume may log",
+      "notes": "No dynamic fallback. Real models differ from Gemini study claims."
+    },
+    "nvidia_nim": {
+      "name": "NVIDIA NIM",
+      "type": "inference_provider",
+      "status": "VERIFIED_200",
+      "free_tier": "Free trial with API key",
+      "api_url": "https://integrate.api.nvidia.com/v1",
+      "verified_model_count": 102,
+      "key_models": ["z-ai/glm-5.2", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "google/gemma-4-31b-it", "meta/llama-3.3-70b-instruct", "mistralai/mistral-nemotron", "stepfun-ai/step-3.7-flash", "minimaxai/minimax-m3", "deepseek-ai/deepseek-v4-flash", "moonshotai/kimi-k2.6"],
+      "data_privacy": "EXPLICITLY logs prompts for training — NOT for proprietary code",
+      "notes": "Largest verified model catalog. GLM-5.2 (not 5.1) is the current version."
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "type": "gateway_aggregator",
+      "status": "VERIFIED_200",
+      "free_tier": "25+ free models. Unverified: 20 RPM, 50 req/day. $10 credit → 1000/day. First 1M BYOK free/month, then 5%.",
+      "api_url": "https://openrouter.ai/api/v1",
+      "free_models": ["nex-agi/nex-n2-pro:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "poolside/laguna-s-2.1:free", "cohere/north-mini-code:free", "z-ai/glm-5.2:free", "minimax/minimax-m3:free", "google/gemma-4-26b-a4b-it:free", "inclusionai/ling-3.0-flash:free", "nvidia/nemotron-3.5-content-safety:free"],
+      "paid_models": ["nex-agi/nex-n2-pro", "qwen/qwen3.7-plus", "qwen/qwen3.7-max", "anthropic/claude-opus-4.8", "google/gemini-3.5-flash", "x-ai/grok-4.5"],
+      "notes": "5.5% markup on top-ups. Severe rate limits on free tier."
+    },
+    "clawrouter": {
+      "name": "ClawRouter",
+      "type": "gateway_agent_native",
+      "status": "VERIFIED_200",
+      "free_tier": "Free, no signup",
+      "api_url": "https://api.clawrouter.com/v1",
+      "notes": "Returns real model list. Needs local proxy for FREE-PROXY tier in NME."
+    },
+    "groq": {
+      "name": "Groq",
+      "type": "inference_provider",
+      "status": "VERIFIED_401",
+      "free_tier": "30 RPM, 1000 req/day. Needs API key.",
+      "api_url": "https://api.groq.com/openai/v1",
+      "geo_restrictions": "BLOCKED: Lebanon, Myanmar, Cuba, Iran, Syria, Sudan, Russia + sanctioned zones",
+      "notes": "401 without key. Needs API key to function."
+    },
+    "cerebras": {
+      "name": "Cerebras",
+      "type": "inference_provider",
+      "status": "VERIFIED_403",
+      "free_tier": "~1M tokens/day. Needs API key. Token bucketing Aug 17 2026.",
+      "api_url": "https://api.cerebras.ai/v1",
+      "notes": "403 from unauthenticated requests. Needs key."
+    },
+    "siliconflow": {
+      "name": "SiliconFlow",
+      "type": "inference_provider_china",
+      "status": "VERIFIED_401",
+      "free_tier": "Needs API key",
+      "api_url": "https://api.siliconflow.cn/v1",
+      "notes": "401 without key. China-based."
+    },
+    "mistral": {
+      "name": "Mistral AI",
+      "type": "inference_provider",
+      "status": "UNVERIFIED",
+      "free_tier": "1B tokens/month Experiment tier. Opt-in data training.",
+      "api_url": "https://api.mistral.ai/v1",
+      "notes": "Not tested live."
+    },
+    "blockrun": {
+      "name": "BlockRun",
+      "type": "inference_provider",
+      "status": "UNVERIFIED",
+      "notes": "Existing in NME config. Not tested live."
+    }
+  },
+
+  "models_verified": {
+    "nex-n2-pro": {
+      "name": "Nex-N2-Pro",
+      "id_openrouter": "nex-agi/nex-n2-pro",
+      "id_openrouter_free": "nex-agi/nex-n2-pro:free",
+      "type": "397B MoE",
+      "benchmarks": {"swe_bench_verified": 80.8},
+      "verified_on": ["openrouter"],
+      "score": 11.0
+    },
+    "glm-5.2": {
+      "name": "Z.ai GLM-5.2",
+      "id_nim": "z-ai/glm-5.2",
+      "id_openrouter": "z-ai/glm-5.2",
+      "id_openrouter_free": "z-ai/glm-5.2:free",
+      "type": "744B MoE",
+      "verified_on": ["nvidia_nim", "openrouter"],
+      "score": 10.4
+    },
+    "deepseek-v3.2": {
+      "name": "DeepSeek-V3.2",
+      "id_sambanova": "DeepSeek-V3.2",
+      "verified_on": ["sambanova"],
+      "score": 10.2
+    },
+    "llama-3.3-70b": {
+      "name": "Meta Llama 3.3 70B Instruct",
+      "id_sambanova": "Meta-Llama-3.3-70B-Instruct",
+      "id_nim": "meta/llama-3.3-70b-instruct",
+      "id_groq": "llama-3.3-70b-versatile",
+      "verified_on": ["sambanova", "nvidia_nim"],
+      "score": 10.1
+    },
+    "gemma-4-31b": {
+      "name": "Gemma 4 31B",
+      "id_sambanova": "gemma-4-31B-it",
+      "id_nim": "google/gemma-4-31b-it",
+      "verified_on": ["sambanova", "nvidia_nim"],
+      "multimodal": true,
+      "score": 10.0
+    },
+    "gpt-oss-120b": {
+      "name": "GPT-OSS 120B",
+      "id_sambanova": "gpt-oss-120b",
+      "id_nim": "openai/gpt-oss-120b",
+      "id_groq": "openai/gpt-oss-120b",
+      "verified_on": ["sambanova", "nvidia_nim"],
+      "score": 9.9
+    },
+    "minimax-m3": {
+      "name": "MiniMax M3",
+      "id_openrouter": "minimax/minimax-m3",
+      "id_openrouter_free": "minimax/minimax-m3:free",
+      "id_nim": "minimaxai/minimax-m3",
+      "verified_on": ["openrouter", "nvidia_nim"],
+      "score": 10.3
+    },
+    "qwen3.7-plus": {
+      "name": "Qwen 3.7 Plus",
+      "id_openrouter": "qwen/qwen3.7-plus",
+      "verified_on": ["openrouter"],
+      "score": 10.2
+    },
+    "qwen3.7-max": {
+      "name": "Qwen 3.7 Max",
+      "id_openrouter": "qwen/qwen3.7-max",
+      "verified_on": ["openrouter"],
+      "score": 10.1
+    },
+    "nemotron-3-ultra-550b": {
+      "name": "Nemotron 3 Ultra 550B",
+      "id_openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "id_openrouter_paid": "nvidia/nemotron-3-ultra-550b-a55b",
+      "verified_on": ["openrouter"],
+      "score": 10.8
+    },
+    "laguna-s-2.1": {
+      "name": "Laguna S 2.1",
+      "id_openrouter": "poolside/laguna-s-2.1:free",
+      "id_openrouter_xs": "poolside/laguna-xs-2.1:free",
+      "verified_on": ["openrouter"],
+      "score": 10.6
+    },
+    "north-mini-code": {
+      "name": "North Mini Code",
+      "id_openrouter": "cohere/north-mini-code:free",
+      "verified_on": ["openrouter"],
+      "score": 10.5
+    },
+    "grok-4.5": {
+      "name": "Grok 4.5",
+      "id_openrouter": "x-ai/grok-4.5",
+      "verified_on": ["openrouter"],
+      "score": 9.8
+    },
+    "claude-opus-4.8": {
+      "name": "Claude Opus 4.8",
+      "id_openrouter": "anthropic/claude-opus-4.8",
+      "verified_on": ["openrouter"],
+      "score": 10.0
+    },
+    "gemini-3.5-flash": {
+      "name": "Gemini 3.5 Flash",
+      "id_openrouter": "google/gemini-3.5-flash",
+      "verified_on": ["openrouter"],
+      "score": 9.9
+    },
+    "kimi-k2.6": {
+      "name": "Kimi K2.6",
+      "id_nim": "moonshotai/kimi-k2.6",
+      "verified_on": ["nvidia_nim"],
+      "score": 9.4
+    },
+    "deepseek-v4-flash": {
+      "name": "DeepSeek V4 Flash",
+      "id_nim": "deepseek-ai/deepseek-v4-flash",
+      "id_blockrun": "nvidia/deepseek-v4-flash",
+      "verified_on": ["nvidia_nim"],
+      "score": 8.9
+    },
+    "mistral-nemotron": {
+      "name": "Mistral Nemotron",
+      "id_nim": "mistralai/mistral-nemotron",
+      "id_blockrun": "nvidia/mistral-nemotron",
+      "verified_on": ["nvidia_nim"],
+      "score": 9.2
+    },
+    "step-3.7-flash": {
+      "name": "Step 3.7 Flash",
+      "id_nim": "stepfun-ai/step-3.7-flash",
+      "id_blockrun": "nvidia/step-3.7-flash",
+      "verified_on": ["nvidia_nim"],
+      "score": 9.1
+    },
+    "nemotron-nano-12b-vl": {
+      "name": "Nemotron Nano 12B VL",
+      "id_nim": "nvidia/nemotron-nano-12b-v2-vl",
+      "id_blockrun": "nvidia/nemotron-nano-12b-v2-vl",
+      "verified_on": ["nvidia_nim"],
+      "score": 8.7
+    },
+    "nemotron-nano-9b": {
+      "name": "Nemotron Nano 9B",
+      "id_nim": "nvidia/nvidia/nemotron-nano-9b-v2",
+      "id_blockrun": "nvidia/nemotron-nano-9b-v2",
+      "verified_on": ["nvidia_nim"],
+      "score": 8.5
+    },
+    "nemotron-omni-30b": {
+      "name": "Nemotron Omni 30B",
+      "id_nim": "nvidia/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "id_blockrun": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "verified_on": ["nvidia_nim"],
+      "score": 8.5
+    },
+    "nemotron-3-super-120b": {
+      "name": "Nemotron 3 Super 120B",
+      "id_nim": "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      "id_blockrun": "nvidia/nemotron-3-super-120b-a12b",
+      "verified_on": ["nvidia_nim"],
+      "score": 8.3
+    },
+    "gemma-4-26b": {
+      "name": "Gemma 4 26B",
+      "id_openrouter": "google/gemma-4-26b-a4b-it:free",
+      "verified_on": ["openrouter"],
+      "score": 8.3
+    },
+    "ling-3.0-flash": {
+      "name": "Ling 3.0 Flash",
+      "id_openrouter": "inclusionai/ling-3.0-flash:free",
+      "verified_on": ["openrouter"],
+      "score": 8.1
+    },
+    "devstral-small": {
+      "name": "Devstral Small",
+      "id_mistral": "devstral-small-latest",
+      "verified_on": [],
+      "score": 7.7
+    },
+    "minimax-m2.7": {
+      "name": "MiniMax M2.7",
+      "id_sambanova": "MiniMax-M2.7",
+      "verified_on": ["sambanova"],
+      "score": 9.8
+    },
+    "deepseek-v3.1": {
+      "name": "DeepSeek-V3.1",
+      "id_sambanova": "DeepSeek-V3.1",
+      "verified_on": ["sambanova"],
+      "score": 9.7
+    },
+    "gpt-oss-20b": {
+      "name": "GPT-OSS 20B",
+      "id_nim": "openai/gpt-oss-20b",
+      "id_groq": "openai/gpt-oss-20b",
+      "id_blockrun": "nvidia/gpt-oss-20b",
+      "verified_on": ["nvidia_nim"],
+      "score": 7.9
+    },
+    "gemini-3.5-flash-lite": {
+      "name": "Gemini 3.5 Flash-Lite",
+      "id_openrouter": "google/gemini-3.5-flash-lite:free",
+      "verified_on": ["openrouter"],
+      "score": 8.2
+    }
+  },
+
+  "models_removed": {
+    "llama-3.1-405b-on-sambanova": "NOT in SambaNova model list — hallucinated in Gemini study",
+    "llama-3.1-70b-on-sambanova": "SambaNova has 3.3, not 3.1 — wrong version",
+    "opencode_zen": "DNS zen.opencode.ai does not resolve — hallucinated domain",
+    "kilo_gateway": "gateway.kilo.ai has expired SSL cert — domain dead",
+    "glm-4.7-cerebras": "Deprecated, not in live APIs",
+    "glm-5.1": "Wrong version — NVIDIA NIM has GLM-5.2, not 5.1",
+    "mimo-v2.5": "Not found in any live API",
+    "qwen-3.6-plus": "Not found — actual model is qwen3.7-plus",
+    "qwen-3-coder-separate": "Not found as separate model — likely qwen3.7 variant",
+    "seed-oss-36b": "Not found in NVIDIA NIM live list (may exist elsewhere)",
+    "gemini-2.5-flash": "Replaced by gemini-3.5-flash",
+    "llama-4-maverick": "Not found in any live API",
+    "llama-4-scout": "Not found in any live API"
+  },
+
+  "excluded": {
+    "together_ai": "NOT FREE — requires $5 minimum credit purchase",
+    "claude_code": "PAID proprietary",
+    "github_copilot": "PAID proprietary",
+    "openpoly": "Likely hallucinated",
+    "ava_supernova": "Likely hallucinated",
+    "tau": "Lightweight educational, not agentic"
+  }
+}
