@@ -6,7 +6,7 @@ requests
 PyPDF2
 python-docx
 edge-tts
-whisper
+openai-whisper
 pyperclip
 Pillow
 opencv-python
@@ -15,3 +15,6 @@ numpy
 cryptography
 psutil
 yt-dlp
+librosa
+audio-separator
+onnxruntime

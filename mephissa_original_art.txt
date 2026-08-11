@@ -1,0 +1,10 @@
+# Mephissa — ORIGINAL companion art (backup)
+# Saved 2026-08-11 before replacing with the DJ art in newmeta_tui.py
+# Previous markup used in the card: [bold #a78bfa]...[/bold #a78bfa]
+
+     _________ 
+     \       / 
+      \ (O) /  
+       \   /   
+        \ /    
+        'v'

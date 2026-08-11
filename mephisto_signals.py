@@ -870,6 +870,32 @@ def get_top_3_pump_dump_tweets() -> Dict[str, List[Dict[str, Any]]]:
     return {"pump_tweets": pumps[:3], "dump_tweets": dumps[:3]}
 
 
+def get_top_sweep_coin() -> str:
+    """Highest-momentum coin from Mephisto's signal engine, for a one-line ticker.
+
+    Ranks all pump signals across platforms by their % velocity and returns the
+    single biggest mover (highest sweep). Falls back to 'n/a' on any failure.
+    """
+    try:
+        data = get_multi_platform_signals()
+        best_tok, best_v = None, float("-inf")
+        for key in ("coingecko", "coinmarketcap", "polymarket", "telegram", "x", "binance_square", "instagram", "threads"):
+            for t in data[key].get("pump_tweets", []):
+                tok = (t.get("token") or "").strip()
+                vel_part = (t.get("velocity") or "").split("%")[0].lstrip("+")
+                try:
+                    v = float(vel_part)
+                except Exception:
+                    v = float("-inf")
+                if tok and v > best_v:
+                    best_tok, best_v = tok, v
+        if best_tok is None:
+            return "n/a"
+        return f"{best_tok} {best_v:+.1f}%"
+    except Exception:
+        return "n/a"
+
+
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------

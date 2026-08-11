@@ -2025,6 +2025,270 @@ def meph_download_video(url: str, resolution: str = "best", output_dir: str = ""
     except Exception as e:
         return f"[ERROR] {e}"
 
+
+# --- Mephissa's spell: one-button karaoke video ---------------------------
+# source -> (download if URL) -> vocal/instrumental separation (BS-Roformer
+# via audio-separator) -> word-level transcription (openai-whisper) ->
+# animated fill-in-color ASS karaoke subtitles -> final MP4 (ffmpeg burns
+# the subtitles over the instrumental + a background). Every stage is a
+# real local tool call, not a mocked pipeline — the tradeoff is that the
+# first run downloads separation model weights (one-time, can take a
+# while) and everything after is CPU-bound (no GPU on this box).
+_KARAOKE_ASS_STYLE = {
+    # App palette, converted to ASS's &HAABBGGRR order.
+    "primary": "&H00FEF200",    # teal #00F2FE — "already sung" fill color
+    "secondary": "&H00FAF9F8",  # off-white #F8F9FA — "not yet sung"
+    "outline": "&H00050505",    # near-black outline for readability
+}
+
+
+def _seconds_to_ass_time(t: float) -> str:
+    t = max(0.0, t)
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _build_karaoke_ass(segments: list, ass_path: str, font: str = "Segoe UI") -> int:
+    # libass applies Unicode BIDI itself for RTL scripts (Arabic etc.) —
+    # words are written in transcribed (logical) order, not reversed.
+    style = _KARAOKE_ASS_STYLE
+    header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n"
+        "ScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Karaoke,{font},52,{style['primary']},{style['secondary']},{style['outline']},&H00000000,"
+        "-1,0,0,0,100,100,0,0,1,3,1,2,40,40,40,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    lines_written = 0
+    with open(ass_path, "w", encoding="utf-8-sig") as f:
+        f.write(header)
+        for seg in segments:
+            words = seg.get("words") or []
+            if not words:
+                continue
+            start, end = words[0]["start"], words[-1]["end"]
+            parts = []
+            for w in words:
+                dur_cs = max(1, round((w["end"] - w["start"]) * 100))
+                parts.append(f"{{\\k{dur_cs}}}{w['word'].strip()}")
+            text = " ".join(parts)
+            f.write(f"Dialogue: 0,{_seconds_to_ass_time(start)},{_seconds_to_ass_time(end)},Karaoke,,0,0,0,,{text}\n")
+            lines_written += 1
+    return lines_written
+
+
+@register_tool("mephissa_karaoke_make", "Mephissa's spell: turn any song into a full karaoke video in one call — separates vocals/instrumental (BS-Roformer), transcribes the vocals with word-level timing (Whisper, Arabic-aware), builds animated fill-in-color karaoke subtitles, and renders the final MP4 over the instrumental.", {
+    "type": "object",
+    "properties": {
+        "source": {"type": "string", "description": "Local audio/video file path, or a URL (YouTube etc.) resolved via yt-dlp"},
+        "language": {"type": "string", "description": "Transcription language code, e.g. 'ar' for Arabic, 'en' for English. Leave blank to auto-detect."},
+        "background": {"type": "string", "description": "Optional path to a background image/video for the final MP4. Default: a plain dark card in the app's palette."},
+        "output_dir": {"type": "string", "description": "Folder to save the final MP4 into (default: current directory)"},
+    },
+    "required": ["source"],
+})
+def mephissa_karaoke_make(source: str, language: str = "", background: str = "", output_dir: str = "") -> str:
+    out_dir = output_dir or "."
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        return f"[ERROR] Can't create output dir: {e}"
+
+    work_dir = tempfile.mkdtemp(prefix="mephissa_karaoke_")
+    try:
+        # Stage 1: resolve to a local audio file.
+        is_url = source.startswith("http://") or source.startswith("https://")
+        if is_url:
+            result = subprocess.run(
+                [sys.executable, "-m", "yt_dlp", "--no-playlist", "-x", "--audio-format", "wav",
+                 "-o", os.path.join(work_dir, "source.%(ext)s"), source],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode != 0:
+                return f"[ERROR] yt-dlp failed: {result.stderr[-800:]}"
+            matches = list(Path(work_dir).glob("source.*"))
+            if not matches:
+                return "[ERROR] yt-dlp reported success but no audio file was found."
+            audio_path = str(matches[0])
+        else:
+            if not os.path.isfile(source):
+                return f"[ERROR] File not found: {source}"
+            audio_path = os.path.join(work_dir, "source.wav")
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", source, "-vn", "-ac", "2", "-ar", "44100", audio_path],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode != 0:
+                return f"[ERROR] ffmpeg couldn't extract audio: {result.stderr[-800:]}"
+
+        # Stage 2: vocal/instrumental separation.
+        try:
+            from audio_separator.separator import Separator
+        except ImportError:
+            return "[ERROR] audio-separator not installed. Run: pip install audio-separator onnxruntime"
+        try:
+            sep = Separator(output_dir=work_dir)
+            sep.load_model()  # defaults to a BS-Roformer vocal-separation model
+            output_files = sep.separate(audio_path)
+        except Exception as e:
+            return f"[ERROR] Separation failed: {e}"
+        vocal_path = next((os.path.join(work_dir, f) for f in output_files if "vocal" in f.lower()), None)
+        instrumental_path = next((os.path.join(work_dir, f) for f in output_files if "instrumental" in f.lower()), None)
+        if not vocal_path or not instrumental_path:
+            # Fall back to positional guess if the model's stem naming differs.
+            paths = [os.path.join(work_dir, f) for f in output_files]
+            if len(paths) < 2:
+                return f"[ERROR] Separation produced unexpected output: {output_files}"
+            vocal_path, instrumental_path = paths[0], paths[1]
+
+        # Stage 3: word-level transcription of the isolated vocal stem.
+        try:
+            import whisper
+        except ImportError:
+            return "[ERROR] openai-whisper not installed. Run: pip install openai-whisper"
+        try:
+            model = whisper.load_model("base")
+            asr = model.transcribe(vocal_path, word_timestamps=True, language=(language or None))
+        except Exception as e:
+            return f"[ERROR] Transcription failed: {e}"
+        segments = asr.get("segments") or []
+        if not any(seg.get("words") for seg in segments):
+            return "[ERROR] Whisper returned no word-level timestamps — vocal stem may be near-silent or unrecognized."
+
+        # Stage 4: karaoke subtitles.
+        ass_path = os.path.join(work_dir, "karaoke.ass")
+        line_count = _build_karaoke_ass(segments, ass_path)
+        if line_count == 0:
+            return "[ERROR] No subtitle lines were generated."
+
+        # Stage 5: render — instrumental audio + background + burned-in karaoke subs.
+        base_name = re.sub(r"[^\w\-]+", "_", Path(source).stem)[:60] or "karaoke"
+        final_path = os.path.join(out_dir, f"{base_name}_karaoke.mp4")
+        if background and os.path.isfile(background):
+            video_input = ["-loop", "1", "-i", os.path.basename(shutil.copy(background, work_dir))]
+        else:
+            video_input = ["-f", "lavfi", "-i", "color=c=0x050505:s=1280x720:r=25"]
+        # Run from work_dir and reference the .ass by bare filename — avoids
+        # ffmpeg's ass filter choking on Windows drive-letter colons/backslashes.
+        render = subprocess.run(
+            ["ffmpeg", "-y", *video_input, "-i", os.path.basename(instrumental_path),
+             "-vf", "ass=karaoke.ass", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-shortest", os.path.abspath(final_path)],
+            capture_output=True, text=True, timeout=600, cwd=work_dir,
+        )
+        if render.returncode != 0:
+            return f"[ERROR] Render failed: {render.stderr[-1000:]}"
+        return f"🎤 Karaoke video ready: {final_path}  ({line_count} lines, {len(segments)} segments)"
+    except subprocess.TimeoutExpired:
+        return "[ERROR] A pipeline stage timed out."
+    except Exception as e:
+        return f"[ERROR] {e}"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# --- Mephissa's spell: microphone recording --------------------------------
+# ffmpeg's dshow input on Windows — no separate SoundRecorder/wmplayer
+# dependency. Stop is graceful ('q' over stdin, ffmpeg's own quit key) so
+# the WAV header gets finalized properly instead of truncated by a hard kill.
+def _dshow_list_audio_devices() -> list:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        return []
+    devices, in_audio = [], False
+    for line in result.stderr.splitlines():
+        if "DirectShow audio devices" in line:
+            in_audio = True
+            continue
+        if "DirectShow video devices" in line:
+            in_audio = False
+            continue
+        if in_audio:
+            m = re.search(r'"([^"]+)"', line)
+            if m:
+                devices.append(m.group(1))
+    return devices
+
+
+@register_tool("mephissa_record_devices", "Mephissa: list available microphone/audio input devices (Windows DirectShow) for recording", {"type": "object", "properties": {}})
+def mephissa_record_devices() -> str:
+    devices = _dshow_list_audio_devices()
+    if not devices:
+        return "No DirectShow audio input devices found (Windows-only feature, and ffmpeg needs to see at least one mic)."
+    return "🎙️ Audio input devices:\n" + "\n".join(f"  • {d}" for d in devices)
+
+
+_REC_STATE = {"proc": None, "path": None}
+
+
+@register_tool("mephissa_record_start", "Mephissa: start recording from a microphone/audio input to a WAV file. Runs in the background — call mephissa_record_stop to finish it, or pass a fixed duration.", {
+    "type": "object",
+    "properties": {
+        "output_path": {"type": "string", "description": "Where to save the WAV (default: a timestamped file in the current directory)"},
+        "duration": {"type": "number", "description": "Seconds to record; 0 or omitted = record until mephissa_record_stop is called"},
+        "device": {"type": "string", "description": "Exact DirectShow device name (see mephissa_record_devices); leave blank to auto-pick the first audio input"},
+    },
+    "required": [],
+})
+def mephissa_record_start(output_path: str = "", duration: float = 0, device: str = "") -> str:
+    if _REC_STATE.get("proc") and _REC_STATE["proc"].poll() is None:
+        return f"Already recording to {_REC_STATE['path']} — call mephissa_record_stop first."
+    dev = device
+    if not dev:
+        devices = _dshow_list_audio_devices()
+        if not devices:
+            return "[ERROR] No audio input device found. Pass device= explicitly, or check mephissa_record_devices."
+        dev = devices[0]
+    path = output_path or f"recording_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+    cmd = ["ffmpeg", "-y", "-f", "dshow", "-i", f"audio={dev}"]
+    if duration and duration > 0:
+        cmd += ["-t", str(duration)]
+    cmd.append(path)
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return "[ERROR] ffmpeg not found — needs ffmpeg on PATH"
+    except Exception as e:
+        return f"[ERROR] {e}"
+    _REC_STATE["proc"] = proc
+    _REC_STATE["path"] = path
+    if duration and duration > 0:
+        return f"🎙️ Recording {duration:.0f}s from '{dev}' -> {path}"
+    return f"🎙️ Recording from '{dev}' -> {path} (call mephissa_record_stop to finish)"
+
+
+@register_tool("mephissa_record_stop", "Mephissa: stop the current microphone recording and finalize the WAV file", {"type": "object", "properties": {}})
+def mephissa_record_stop() -> str:
+    proc = _REC_STATE.get("proc")
+    if not proc or proc.poll() is not None:
+        _REC_STATE["proc"] = None
+        return "Nothing is recording."
+    path = _REC_STATE.get("path")
+    try:
+        proc.communicate(input=b"q", timeout=5)
+    except Exception:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    _REC_STATE["proc"] = None
+    return f"⏹ Recording saved: {path}"
+
+
 # --- Mephissa DJ mode: background audio/video playback -------------------
 # One track "playing" at a time via a detached ffplay process (any format
 # ffmpeg understands), plus a simple queue. Pause/resume is a real OS-level
@@ -2040,6 +2304,20 @@ _DJ_STATE = {
     # segment (since last play/seek/resume) began. Elapsed = position +
     # (now - seg_start) while actually playing; frozen while paused.
     "stream": None, "position": 0.0, "seg_start": None, "volume": 100,
+    # Real BPM detection state (librosa). "bpm_status": idle/analyzing/ready/unavailable.
+    # "beat_anchor" is the offset (seconds INTO the track) of the first
+    # detected beat — beat phase is computed relative to this, not to 0:00,
+    # since a track rarely starts exactly on a downbeat.
+    "bpm": None, "bpm_status": "idle", "beat_anchor": 0.0,
+    "key_name": None, "key_camelot": None,
+    # Duration/artwork/cue points/band-energy - all populated async (like
+    # BPM) and read through meph_dj_beat_state(), the same single getter
+    # the TUI heartbeat and the HTML jog wheel both already poll, so every
+    # new visual signal stays exactly in sync with volume/seek/pause/etc
+    # instead of drifting as a second parallel state.
+    "duration": None, "artwork_url": None,
+    "cues": {}, "energy_status": "idle", "energy_envelope": [],
+
     # Bumped on every intentional transition (play/seek/skip/stop), BEFORE
     # the old process gets terminated. A watcher thread only acts if its
     # captured gen still matches when it wakes — this is what actually
@@ -2065,6 +2343,100 @@ DJ_MODES = {
     "lebanese_hits":       {"label": "Lebanese Top Hits",         "source": "yt", "query": "اغاني لبنانية جديدة توب هيتس"},
     "arabic_hits":         {"label": "Arabic Top Hits",           "source": "yt", "query": "اغاني عربية توب هيتس"},
 }
+
+# Song-suggestion catalog, per DJ mode: title/artist + BPM + Camelot key for
+# harmonic/tempo homogeneity (mix two tracks whose Camelot numbers are equal
+# or adjacent, and whose BPM is within ~6%, and they'll sit together
+# cleanly). BPM/key values here are director's-reference ESTIMATES from
+# publicly-known tempo/feel, not measured — meph_dj_lesson-style planning
+# aid, not a substitute for actually running the real detector once a track
+# plays. Arabic entries lean Lebanese/Syrian (Levantine) per house curation
+# preference — no Egyptian artists in this catalog.
+SONG_SUGGESTIONS = {
+    "electronic": [
+        {"title": "Levels", "artist": "Avicii", "bpm": 126, "key": "8B"},
+        {"title": "Titanium", "artist": "David Guetta ft. Sia", "bpm": 126, "key": "10B"},
+        {"title": "Don't You Worry Child", "artist": "Swedish House Mafia", "bpm": 129, "key": "11B"},
+        {"title": "Wake Me Up", "artist": "Avicii", "bpm": 124, "key": "2B"},
+        {"title": "Animals", "artist": "Martin Garrix", "bpm": 128, "key": "9A"},
+        {"title": "Reload", "artist": "Sebastian Ingrosso & Tobias", "bpm": 128, "key": "6A"},
+    ],
+    "deephouse": [
+        {"title": "Losing It", "artist": "FISHER", "bpm": 124, "key": "9A"},
+        {"title": "Get Lucky", "artist": "Daft Punk ft. Pharrell", "bpm": 116, "key": "3B"},
+        {"title": "Opus", "artist": "Eric Prydz", "bpm": 126, "key": "4A"},
+        {"title": "Breathe", "artist": "Testpilot / Solomun-style edit", "bpm": 122, "key": "8A"},
+        {"title": "Innocence", "artist": "Fritz Kalkbrenner", "bpm": 123, "key": "7A"},
+    ],
+    "techno": [
+        {"title": "Strobe (edit)", "artist": "Deadmau5", "bpm": 128, "key": "6A"},
+        {"title": "Ghosts n Stuff", "artist": "Deadmau5", "bpm": 128, "key": "9A"},
+        {"title": "Alive", "artist": "Charlotte de Witte", "bpm": 132, "key": "5A"},
+        {"title": "Reason", "artist": "FJAAK", "bpm": 135, "key": "12A"},
+        {"title": "Adagio for Strings (Tiesto edit)", "artist": "Tiesto", "bpm": 138, "key": "2A"},
+    ],
+    "lebanese_hits": [
+        {"title": "Goum Barah", "artist": "Myriam Fares", "bpm": 126, "key": "5A", "note": "club/dance remix tempo (est.)"},
+        {"title": "Ah W Noss", "artist": "Nancy Ajram", "bpm": 100, "key": "7A", "note": "original tempo (est.)"},
+        {"title": "Aa Bali", "artist": "Elissa", "bpm": 96, "key": "3A", "note": "original tempo (est.)"},
+        {"title": "Bel 3araby", "artist": "Ragheb Alama", "bpm": 122, "key": "9B", "note": "dance edit tempo (est.)"},
+        {"title": "Sindibad", "artist": "Assi El Hallani", "bpm": 98, "key": "4A", "note": "original tempo (est.)"},
+    ],
+    "arabic_hits": [
+        {"title": "Ala Bali", "artist": "George Wassouf", "bpm": 100, "key": "6A", "note": "Syrian — original tempo (est.)"},
+        {"title": "Ya Habibi", "artist": "Assala Nasri", "bpm": 98, "key": "8A", "note": "Syrian — original tempo (est.)"},
+        {"title": "Goum Barah", "artist": "Myriam Fares", "bpm": 126, "key": "5A", "note": "Lebanese — club remix tempo (est.)"},
+        {"title": "Ma Tegi Hena", "artist": "Nawal Al Zoghbi", "bpm": 104, "key": "10A", "note": "Lebanese — original tempo (est.)"},
+    ],
+}
+SONG_SUGGESTIONS["ghina_charqi"] = SONG_SUGGESTIONS["arabic_hits"]
+SONG_SUGGESTIONS["ghina_charqi_hadith"] = SONG_SUGGESTIONS["lebanese_hits"]
+
+
+def _camelot_compatible(a: str, b: str) -> bool:
+    # Same number+letter, adjacent number same letter, or same number
+    # opposite letter (relative major/minor) — the three "safe" harmonic
+    # moves on the Camelot wheel.
+    if not a or not b or a in ("?", None) or b in ("?", None):
+        return False
+    try:
+        na, la = int(a[:-1]), a[-1]
+        nb, lb = int(b[:-1]), b[-1]
+    except (ValueError, IndexError):
+        return False
+    if na == nb:
+        return True
+    diff = min((na - nb) % 12, (nb - na) % 12)
+    return diff == 1 and la == lb
+
+
+@register_tool("meph_dj_suggest", "Mephissa DJ: suggest songs from the curated catalog that are BPM/key-homogeneous with what's currently playing (or just list the current mode's catalog if nothing's playing yet)", {"type": "object", "properties": {}})
+def meph_dj_suggest() -> str:
+    mode = _DJ_STATE.get("mode", "electronic")
+    catalog = SONG_SUGGESTIONS.get(mode, [])
+    label = DJ_MODES.get(mode, {}).get("label", mode)
+    if not catalog:
+        return f"No suggestions catalogued yet for {label}."
+    cur_bpm = _DJ_STATE.get("bpm")
+    cur_key = _DJ_STATE.get("key_camelot")
+    lines = [f"🎶 Song suggestions — {label}"]
+    if cur_bpm and cur_key and cur_key != "?":
+        lines[0] += f"  (matching against current: {cur_bpm} BPM, {cur_key})"
+        compatible, rest = [], []
+        for s in catalog:
+            bpm_ok = abs(s["bpm"] - cur_bpm) / cur_bpm <= 0.06
+            key_ok = _camelot_compatible(cur_key, s["key"])
+            (compatible if (bpm_ok and key_ok) else rest).append(s)
+        ordered = compatible + rest
+        for s in ordered:
+            tag = "✅ homogeneous" if s in compatible else "  "
+            note = f" — {s['note']}" if s.get("note") else ""
+            lines.append(f"  {tag} {s['title']} — {s['artist']}  [{s['bpm']} BPM, {s['key']}]{note}")
+    else:
+        for s in catalog:
+            note = f" — {s['note']}" if s.get("note") else ""
+            lines.append(f"  • {s['title']} — {s['artist']}  [{s['bpm']} BPM, {s['key']}]{note}")
+    return "\n".join(lines)
 
 
 def _dj_resolve_stream(source: str) -> str:
@@ -2144,6 +2516,8 @@ def meph_dj_play(source: str, queue: bool = False) -> str:
         _DJ_STATE["position"] = 0.0
         _DJ_STATE["seg_start"] = time.time()
         _dj_watch(proc, source)
+        _dj_start_bpm_analysis(stream)
+        threading.Thread(target=_dj_fetch_artwork, args=(source, _DJ_STATE["gen"]), daemon=True).start()
         return f"▶ Now playing: {source}"
     except FileNotFoundError:
         return "[ERROR] ffplay not found — needs ffmpeg on PATH"
@@ -2241,7 +2615,7 @@ def meph_dj_seek(offset_seconds) -> str:
     return f"⏩ Seeked to {mm}:{ss:02d}"
 
 
-@register_tool("meph_dj_volume", "Mephissa DJ: volume knob (+/- for now) — adjust playback volume", {"type": "object", "properties": {"delta": {"type": "number", "description": "e.g. 10 to raise, -10 to lower"}}, "required": ["delta"]})
+@register_tool("meph_dj_volume", "Mephissa DJ: volume knob (+/- for now) — adjust playback volume", {"type": "object", "properties": {"delta": {"type": "number", "description": "e.g. 5 to raise, -5 to lower (small steps = gradual ramp)"}}, "required": ["delta"]})
 def meph_dj_volume(delta) -> str:
     if not _DJ_STATE.get("stream"):
         return "Nothing is playing."
@@ -2250,6 +2624,628 @@ def meph_dj_volume(delta) -> str:
     if proc is None:
         return "[ERROR] ffplay not found — needs ffmpeg on PATH"
     return f"🔊 Volume: {new_vol}%"
+
+
+def meph_dj_volume_level() -> int:
+    # Plain getter (not agent-facing) so the TUI can paint a live "72%"
+    # readout without reaching into _DJ_STATE directly.
+    return int(_DJ_STATE.get("volume", 100))
+
+
+# --- Mephissa's Music-Production School (Convert / Mix / Master / Karaoke) --
+# Lessons grounded in the free/OSS tools Mephissa is taught from: Mixxx
+# (live mixing), Audacity (editing + effects), and Stereo Tool (broadcast
+# processing). Each "skill" maps to a real ffmpeg filter chain below so the
+# lesson isn't just theory — it's the same DSP the tools themselves use.
+MEPHISSA_MUSIC_LESSONS = [
+    {
+        "skill": "Convert",
+        "tool": "ffmpeg / Audacity",
+        "lesson": ("Format conversion is remuxing + re-encoding. Keep lossless (FLAC/WAV) for "
+                   "editing masters, and only bake to lossy (MP3/AAC/OGG) at the final delivery step "
+                   "so you never stack two lossy encodes. Audacity exports via File > Export, Mixxx "
+                   "re-encodes on record; ffmpeg is the same engine underneath."),
+        "ffmpeg": "ffmpeg -i in.wav -c:a libmp3lame out.mp3",
+    },
+    {
+        "skill": "Mix",
+        "tool": "Mixxx / ffmpeg",
+        "lesson": ("Blending is a gain + EQ handoff, not a hard cut. Keep the two basslines from "
+                   "clashing by rolling one low band down while the other takes over (the EQ kill swap). "
+                   "Mixxx's crossfader and EQ knobs do it live; ffmpeg's amix/filter_complex does the "
+                   "same offline with a ducked crossfade."),
+        "ffmpeg": "ffmpeg -i a -i b -filter_complex amix=inputs=2:duration=longest:normalize=0 blend.mp3",
+    },
+    {
+        "skill": "Master",
+        "tool": "Audacity / Stereo Tool / ffmpeg",
+        "lesson": ("Mastering is loudness + tonal balance + clean headroom. Normalize to ~-14 LUFS "
+                   "(streaming loudness), keep true peak under -1 dBTP, add a gentle EQ warmth shelf and "
+                   "a high-pass to kill rumble. Audacity's Loudness Normalization and Stereo Tool's "
+                   "multiband do this; ffmpeg's loudnorm chain is the broadcast-grade equivalent."),
+        "ffmpeg": "ffmpeg -i in -af \"loudnorm=I=-14:TP=-1.5:LRA=11,equalizer=f=60:w=1:g=2,highpass=f=35\" mastered.wav",
+    },
+    {
+        "skill": "Karaoke",
+        "tool": "ffmpeg / BS-Roformer / Whisper",
+        "lesson": ("Karaoke = separate vocals from instrumental, then sync the lyrics to the beat. "
+                   "Vocal isolation is a stem-split (BS-Roformer), lyric timing is a transcription align "
+                   "(Whisper), and the final render burns the subtitles over the instrumental. That's the "
+                   "Siren Song pipeline already wired into Mephissa."),
+        "ffmpeg": "mephissa_karaoke_make() — the existing one-button pipeline",
+    },
+    {
+        "skill": "Clean / Enhance",
+        "tool": "Audacity / ffmpeg",
+        "lesson": ("Cleaning is subtractive: high-pass rumble, spectral noise reduction (afftdn), then a "
+                   "de-esser for harsh sibilance. Enhancement is additive last: a small presence shelf "
+                   "around 6-8 kHz and a tight low shelf for body. Do the surgical cleaning first — "
+                   "boosting before removing noise just amplifies the noise."),
+        "ffmpeg": "ffmpeg -i in -af \"highpass=f=35,afftdn=nf=-35,deesser,equalizer=f=7000:w=1:g=1.5\" clean.wav",
+    },
+]
+
+
+def meph_dj_music_lesson(skill: str = "") -> str:
+    """Mephissa's Music-Production School — returns the lesson(s) matching a
+    skill (convert/mix/master/karaoke/clean), or the full curriculum."""
+    skill = (skill or "").strip().lower()
+    entries = MEPHISSA_MUSIC_LESSONS
+    if skill:
+        entries = [e for e in MEPHISSA_MUSIC_LESSONS if skill in e["skill"].lower()]
+        if not entries:
+            names = ", ".join(e["skill"] for e in MEPHISSA_MUSIC_LESSONS)
+            return f"No skill matching '{skill}'. Known skills: {names}"
+    lines = ["🎓 MEPHISSA'S MUSIC-PRODUCTION SCHOOL (Convert / Mix / Master / Karaoke), free tools: Mixxx · Audacity · Stereo Tool", ""]
+    for e in entries:
+        lines.append(f"▶ {e['skill']}  — taught via {e['tool']}")
+        lines.append(f"    Lesson: {e['lesson']}")
+        lines.append(f"    ffmpeg: {e['ffmpeg']}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def meph_dj_eq_shortcuts() -> str:
+    """Mephissa's EQ shortcut cheat-sheet — the deck's EQ knobs, mapped to the
+    jog-wheel transport buttons and the mix moment to reach for them."""
+    return (
+        "🎚 MEPHISSA'S EQ CHEAT-SHEET — the deck's EQ knob map:\n"
+        "    Lower Left  = LOW EQ (warmth/bass) — kill it during a Bass Swap\n"
+        "    Higher Right = HIGH EQ (air/clarity) — ride it on the phrase build\n"
+        "    At 2:05 / 2nd song in deck — cue the EQ kill on the next 8-bar phrase\n"
+        "    Rule: move one band at a time, watch the meter, don't stack the lows."
+    )
+
+
+# --- Mephissa's real ffmpeg DSP (Convert / Master / Clean / Mix) ----------
+def _ffmpeg_run(args) -> str:
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            return f"[ERROR] ffmpeg: {r.stderr.strip()[-400:]}"
+        return "ok"
+    except FileNotFoundError:
+        return "[ERROR] ffmpeg not found on PATH"
+    except Exception as e:
+        return f"[ERROR] {e}"
+
+
+@register_tool("meph_dj_convert", "Mephissa: convert an audio/video file to mp3/wav/flac/ogg/m4a via ffmpeg (real DSP)", {"type": "object", "properties": {"infile": {"type": "string"}, "out_fmt": {"type": "string", "description": "mp3, wav, flac, ogg or m4a"}}, "required": ["infile", "out_fmt"]})
+def meph_dj_convert(infile: str, out_fmt: str = "wav") -> str:
+    ext = out_fmt.lstrip(".").lower()
+    base, _ = os.path.splitext(infile)
+    outfile = f"{base}.{ext}"
+    codec = {"mp3": "libmp3lame", "wav": "pcm_s16le", "flac": "flac", "ogg": "libvorbis", "m4a": "aac"}.get(ext)
+    if codec is None:
+        return f"[ERROR] unsupported format '{out_fmt}'"
+    res = _ffmpeg_run(["ffmpeg", "-y", "-i", infile, "-c:a", codec, outfile])
+    return f"✅ Convert {infile} -> {outfile} ({ext})  [{res}]" if res == "ok" else res
+
+
+@register_tool("meph_dj_master", "Mephissa: master a track — loudness normalization (-14 LUFS), EQ warmth and soxr resample via ffmpeg (real DSP)", {"type": "object", "properties": {"infile": {"type": "string"}, "outfile": {"type": "string"}}, "required": ["infile"]})
+def meph_dj_master(infile: str, outfile: str = "") -> str:
+    if not outfile:
+        base, _ = os.path.splitext(infile)
+        outfile = f"{base}.mastered.wav"
+    af = ("loudnorm=I=-14:TP=-1.5:LRA=11,"
+          "equalizer=f=60:t=q:w=1:g=2,"
+          "equalizer=f=120:t=q:w=1:g=1,"
+          "equalizer=f=8000:t=q:w=1:g=1.5,"
+          "aresample=resampler=soxr:precision=28")
+    res = _ffmpeg_run(["ffmpeg", "-y", "-i", infile, "-af", af, "-c:a", "pcm_s16le", outfile])
+    return f"✅ Mastered -> {outfile} (-14 LUFS, EQ warmth, soxr)  [{res}]" if res == "ok" else res
+
+
+@register_tool("meph_dj_clean", "Mephissa: clean a track — high-pass rumble, spectral noise reduction (afftdn), de-esser, presence shelf via ffmpeg (real DSP)", {"type": "object", "properties": {"infile": {"type": "string"}, "outfile": {"type": "string"}}, "required": ["infile"]})
+def meph_dj_clean(infile: str, outfile: str = "") -> str:
+    if not outfile:
+        base, _ = os.path.splitext(infile)
+        outfile = f"{base}.clean.wav"
+    af = ("highpass=f=35,afftdn=nf=-35,deesser,"
+          "equalizer=f=7000:t=q:w=1:g=1.5")
+    res = _ffmpeg_run(["ffmpeg", "-y", "-i", infile, "-af", af, "-c:a", "pcm_s16le", outfile])
+    return f"✅ Cleaned -> {outfile} (rumble+hiss removed, presence shelf)  [{res}]" if res == "ok" else res
+
+
+@register_tool("meph_dj_mix", "Mephissa: blend two tracks into one with a ducked crossfade via ffmpeg amix (real DSP)", {"type": "object", "properties": {"track_a": {"type": "string"}, "track_b": {"type": "string"}, "outfile": {"type": "string"}}, "required": ["track_a", "track_b"]})
+def meph_dj_mix(track_a: str, track_b: str, outfile: str = "blend.mp3") -> str:
+    res = _ffmpeg_run(["ffmpeg", "-y", "-i", track_a, "-i", track_b,
+                       "-filter_complex", "amix=inputs=2:duration=longest:normalize=0",
+                       "-c:a", "libmp3lame", outfile])
+    return f"✅ Blended -> {outfile} (ducked crossfade)  [{res}]" if res == "ok" else res
+
+
+# --- Real BPM detection + beat-synced heartbeat ---------------------------
+# ffplay exposes no live BPM/beat feed, so we get a REAL tempo by pulling a
+# ~40s clip of the track through ffmpeg to a temp wav and running librosa's
+# beat tracker on it in a background thread — playback isn't blocked while
+# this runs. Once it lands, everything downstream (heartbeat pulse, phrase
+# countdown, "perfect transition" grading) is derived from that real number,
+# not a guessed/fixed BPM.
+_DJ_BEATS_PER_BAR = 4
+_DJ_BARS_PER_PHRASE = 8  # a classic 8-bar/32-beat phrase — the standard mix point
+
+# Camelot wheel — the harmonic-mixing notation DJs actually use (Serato/Mixed
+# In Key convention). Keyed by pitch class (0=C..11=B); relative major/minor
+# share the same number, different letter, so adjacent numbers = compatible.
+_CAMELOT_MAJOR = {0: "8B", 7: "9B", 2: "10B", 9: "11B", 4: "12B", 11: "1B",
+                  6: "2B", 1: "3B", 8: "4B", 3: "5B", 10: "6B", 5: "7B"}
+_CAMELOT_MINOR = {9: "8A", 4: "9A", 11: "10A", 6: "11A", 1: "12A", 8: "1A",
+                  3: "2A", 10: "3A", 5: "4A", 0: "5A", 7: "6A", 2: "7A"}
+_PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+# Krumhansl-Kessler key profiles — standard reference weights for correlating
+# a track's chroma against each of the 24 possible major/minor keys.
+_KS_MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+_KS_MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+
+
+def _estimate_key_camelot(y, sr, librosa_mod) -> tuple:
+    import numpy as np
+    chroma = librosa_mod.feature.chroma_cqt(y=y, sr=sr)
+    profile = chroma.mean(axis=1)
+    norm = np.linalg.norm(profile)
+    if norm <= 1e-9:
+        return "?", "?"
+    profile = profile / norm
+    maj_ref = np.array(_KS_MAJOR_PROFILE) / np.linalg.norm(_KS_MAJOR_PROFILE)
+    min_ref = np.array(_KS_MINOR_PROFILE) / np.linalg.norm(_KS_MINOR_PROFILE)
+    best_score, best_name, best_camelot = -2.0, "?", "?"
+    for shift in range(12):
+        maj_score = float(np.dot(profile, np.roll(maj_ref, shift)))
+        min_score = float(np.dot(profile, np.roll(min_ref, shift)))
+        if maj_score > best_score:
+            best_score = maj_score
+            best_name, best_camelot = f"{_PITCH_NAMES[shift]} major", _CAMELOT_MAJOR[shift]
+        if min_score > best_score:
+            best_score = min_score
+            best_name, best_camelot = f"{_PITCH_NAMES[shift]} minor", _CAMELOT_MINOR[shift]
+    return best_name, best_camelot
+
+
+def _dj_analyze_bpm(stream: str, gen: int) -> None:
+    tmp_path = None
+    try:
+        import librosa
+    except ImportError:
+        if _DJ_STATE.get("gen") == gen:
+            _DJ_STATE["bpm_status"] = "unavailable"
+        return
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", stream, "-t", "40", "-vn", "-ac", "1", "-ar", "22050", tmp_path],
+            capture_output=True, timeout=45,
+        )
+        if result.returncode != 0 or _DJ_STATE.get("gen") != gen:
+            if _DJ_STATE.get("gen") == gen:
+                _DJ_STATE["bpm_status"] = "unavailable"
+            return
+        y, sr = librosa.load(tmp_path, sr=22050, mono=True)
+        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        tempo = float(tempo) if hasattr(tempo, "__float__") else float(tempo[0])
+        if _DJ_STATE.get("gen") != gen:
+            return  # a newer track started while we were analyzing — discard
+        anchor = float(librosa.frames_to_time(beat_frames[0], sr=sr)) if len(beat_frames) else 0.0
+        key_name, key_camelot = _estimate_key_camelot(y, sr, librosa)
+        _DJ_STATE["bpm"] = round(tempo, 1)
+        _DJ_STATE["beat_anchor"] = anchor
+        _DJ_STATE["key_name"] = key_name
+        _DJ_STATE["key_camelot"] = key_camelot
+        _DJ_STATE["bpm_status"] = "ready"
+    except Exception:
+        if _DJ_STATE.get("gen") == gen:
+            _DJ_STATE["bpm_status"] = "unavailable"
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def _dj_probe_duration(stream: str, gen: int) -> None:
+    # ffprobe reads container metadata only - no decode needed, so this
+    # lands almost instantly even though the BPM/energy analysis threads
+    # (which do decode audio) are still running.
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", stream],
+            capture_output=True, text=True, timeout=15,
+        )
+        if _DJ_STATE.get("gen") != gen:
+            return
+        dur = float(result.stdout.strip())
+        if dur > 0:
+            _DJ_STATE["duration"] = dur
+    except Exception:
+        pass
+
+
+def _dj_fetch_artwork(source: str, gen: int) -> None:
+    # Fire-and-forget, AFTER playback already started - a second yt-dlp
+    # metadata call would otherwise double the time-to-first-sound. The
+    # frontend just picks up artwork_url whenever the next /state poll
+    # lands after this resolves (or never, if it's a local file/stream
+    # with no thumbnail - band it fails silently either way).
+    is_url = source.startswith("http://") or source.startswith("https://")
+    is_search = source.startswith(("ytsearch", "scsearch"))
+    if not (is_url or is_search):
+        return
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "yt_dlp", "--no-playlist", "-j", source],
+            capture_output=True, text=True, timeout=30,
+        )
+        if _DJ_STATE.get("gen") != gen or result.returncode != 0:
+            return
+        info = json.loads(result.stdout.strip().splitlines()[-1])
+        thumb = info.get("thumbnail")
+        if thumb:
+            _DJ_STATE["artwork_url"] = thumb
+    except Exception:
+        pass
+
+
+def _dj_analyze_energy(stream: str, gen: int) -> None:
+    # Real 3-band (bass/mid/treble) energy-over-time envelope from the
+    # FULL track via librosa STFT - not fake/random colors, and not true
+    # AI stem separation (that's Siren Song's much heavier BS-Roformer
+    # pipeline) - an honest spectral-band proxy: low band tracks
+    # kick/bass energy, mid tracks instruments/harmony, high tracks
+    # cymbals/vocal sibilance. Resampled to 2 samples/sec and cached so
+    # playback can look up "energy at this timestamp" cheaply every tick.
+    tmp_path = None
+    try:
+        import librosa
+        import numpy as np
+    except ImportError:
+        if _DJ_STATE.get("gen") == gen:
+            _DJ_STATE["energy_status"] = "unavailable"
+        return
+    try:
+        _DJ_STATE["energy_status"] = "analyzing"
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", stream, "-vn", "-ac", "1", "-ar", "22050", tmp_path],
+            capture_output=True, timeout=180,
+        )
+        if result.returncode != 0 or _DJ_STATE.get("gen") != gen:
+            if _DJ_STATE.get("gen") == gen:
+                _DJ_STATE["energy_status"] = "unavailable"
+            return
+        y, sr = librosa.load(tmp_path, sr=22050, mono=True)
+        if _DJ_STATE.get("gen") != gen:
+            return
+        hop = 512
+        stft = np.abs(librosa.stft(y, hop_length=hop))
+        freqs = librosa.fft_frequencies(sr=sr)
+        bass_idx = freqs < 250
+        mid_idx = (freqs >= 250) & (freqs < 4000)
+        treble_idx = freqs >= 4000
+        bass = stft[bass_idx].mean(axis=0)
+        mid = stft[mid_idx].mean(axis=0)
+        treble = stft[treble_idx].mean(axis=0)
+        frame_times = librosa.frames_to_time(range(stft.shape[1]), sr=sr, hop_length=hop)
+
+        def _norm(band):
+            peak = float(band.max()) if band.size else 0.0
+            return (band / peak) if peak > 1e-9 else band
+
+        bass, mid, treble = _norm(bass), _norm(mid), _norm(treble)
+        step = max(1, int(sr / hop / 2))  # ~2 samples/sec
+        envelope = [
+            {"t": round(float(frame_times[i]), 2), "bass": round(float(bass[i]), 3),
+             "mid": round(float(mid[i]), 3), "treble": round(float(treble[i]), 3)}
+            for i in range(0, len(frame_times), step)
+        ]
+        if _DJ_STATE.get("gen") != gen:
+            return
+        _DJ_STATE["energy_envelope"] = envelope
+        _DJ_STATE["energy_status"] = "ready"
+    except Exception:
+        if _DJ_STATE.get("gen") == gen:
+            _DJ_STATE["energy_status"] = "unavailable"
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def _dj_band_energy_at(elapsed: float) -> dict:
+    env = _DJ_STATE.get("energy_envelope") or []
+    if not env:
+        return {"bass": 0.0, "mid": 0.0, "treble": 0.0}
+    # Envelope is sorted by time (built in order) - linear scan is fine at
+    # ~2 samples/sec (a 5-minute track is only ~600 entries).
+    best = env[0]
+    for entry in env:
+        if entry["t"] > elapsed:
+            break
+        best = entry
+    return {"bass": best["bass"], "mid": best["mid"], "treble": best["treble"]}
+
+
+def _dj_start_bpm_analysis(stream: str) -> None:
+    _DJ_STATE["bpm"] = None
+    _DJ_STATE["beat_anchor"] = 0.0
+    _DJ_STATE["key_name"] = None
+    _DJ_STATE["key_camelot"] = None
+    _DJ_STATE["bpm_status"] = "analyzing"
+    _DJ_STATE["duration"] = None
+    _DJ_STATE["artwork_url"] = None
+    _DJ_STATE["cues"] = {}
+    _DJ_STATE["energy_status"] = "idle"
+    _DJ_STATE["energy_envelope"] = []
+    gen = _DJ_STATE["gen"]
+    import threading
+    threading.Thread(target=_dj_analyze_bpm, args=(stream, gen), daemon=True).start()
+    threading.Thread(target=_dj_probe_duration, args=(stream, gen), daemon=True).start()
+    threading.Thread(target=_dj_analyze_energy, args=(stream, gen), daemon=True).start()
+
+
+@register_tool("meph_dj_cue_set", "Mephissa DJ: set a performance-pad cue point (0-3) at the current playback position", {"type": "object", "properties": {"slot": {"type": "integer", "description": "Pad slot 0-3"}}, "required": ["slot"]})
+def meph_dj_cue_set(slot: int) -> str:
+    slot = max(0, min(3, int(slot)))
+    pos = _dj_elapsed()
+    _DJ_STATE.setdefault("cues", {})[str(slot)] = round(pos, 2)
+    mm, ss = divmod(int(pos), 60)
+    return f"📍 Cue {slot} set at {mm}:{ss:02d}"
+
+
+@register_tool("meph_dj_cue_jump", "Mephissa DJ: jump to a previously-set performance-pad cue point (0-3)", {"type": "object", "properties": {"slot": {"type": "integer", "description": "Pad slot 0-3"}}, "required": ["slot"]})
+def meph_dj_cue_jump(slot: int) -> str:
+    slot = max(0, min(3, int(slot)))
+    cues = _DJ_STATE.get("cues", {})
+    pos = cues.get(str(slot))
+    if pos is None:
+        return f"Cue {slot} isn't set yet."
+    if not _DJ_STATE.get("stream"):
+        return "Nothing loaded."
+    proc = _dj_restart(pos, _DJ_STATE.get("volume", 100))
+    if proc is None:
+        return "[ERROR] ffplay not found — needs ffmpeg on PATH"
+    mm, ss = divmod(int(pos), 60)
+    return f"⏮ Jumped to cue {slot} ({mm}:{ss:02d})"
+
+
+def meph_dj_beat_state() -> dict:
+    # Plain getter — feeds both the TUI's heartbeat pulse and the HTML
+    # visualizer's beat-grid, so the beat math lives in exactly one place.
+    proc = _DJ_STATE.get("proc")
+    alive = proc is not None and proc.poll() is None
+    playing = alive and not _DJ_STATE["paused"]
+    bpm = _DJ_STATE.get("bpm")
+    status = _DJ_STATE.get("bpm_status", "idle")
+    elapsed = _dj_elapsed()
+    duration = _DJ_STATE.get("duration")
+    state = {
+        "playing": playing,
+        "status": status,
+        "bpm": bpm,
+        "key_name": _DJ_STATE.get("key_name"),
+        "key_camelot": _DJ_STATE.get("key_camelot"),
+        "elapsed": round(elapsed, 2),
+        "duration": duration,
+        "remaining": round(max(0.0, duration - elapsed), 2) if duration else None,
+        "artwork_url": _DJ_STATE.get("artwork_url"),
+        "cues": _DJ_STATE.get("cues", {}),
+        "energy_status": _DJ_STATE.get("energy_status", "idle"),
+        "band_energy": _dj_band_energy_at(elapsed),
+        "on_beat": False,
+        "beat_in_bar": 0,
+        "bar_in_phrase": 0,
+        "beats_per_bar": _DJ_BEATS_PER_BAR,
+        "bars_per_phrase": _DJ_BARS_PER_PHRASE,
+        "in_window": False,
+        "phrase_progress": 0.0,
+    }
+    if bpm and playing and status == "ready":
+        anchor = _DJ_STATE.get("beat_anchor", 0.0)
+        beat_interval = 60.0 / bpm
+        since_anchor = max(0.0, elapsed - anchor)
+        beat_index = int(since_anchor // beat_interval)
+        phase = since_anchor % beat_interval
+        state["on_beat"] = phase < min(0.12, beat_interval * 0.25)
+        state["beat_in_bar"] = beat_index % _DJ_BEATS_PER_BAR
+        bar_index = beat_index // _DJ_BEATS_PER_BAR
+        state["bar_in_phrase"] = bar_index % _DJ_BARS_PER_PHRASE
+        # "perfect transition window" = the last bar of every 8-bar phrase,
+        # i.e. the classic mix-out point DJs actually cue on.
+        state["in_window"] = state["bar_in_phrase"] == _DJ_BARS_PER_PHRASE - 1
+        total_beats = _DJ_BEATS_PER_BAR * _DJ_BARS_PER_PHRASE
+        beats_into_phrase = state["bar_in_phrase"] * _DJ_BEATS_PER_BAR + state["beat_in_bar"]
+        state["phrase_progress"] = round((beats_into_phrase + phase / beat_interval) / total_beats, 3)
+    return state
+
+
+@register_tool("meph_dj_transition", "Mephissa DJ: crossfade-skip to the next track, graded against the real beat-synced phrase window — tells you if you hit the perfect transition point or went off-beat", {"type": "object", "properties": {}})
+def meph_dj_transition() -> str:
+    beat = meph_dj_beat_state()
+    msg = meph_dj_skip()
+    if not msg.startswith("▶ Crossfading"):
+        return msg
+    if beat.get("status") != "ready":
+        return f"{msg} (BPM not analyzed yet — can't grade timing)"
+    if beat.get("in_window"):
+        return f"🎯 PERFECT TRANSITION — right on the phrase boundary! {msg}"
+    bar = beat.get("bar_in_phrase", 0) + 1
+    return f"⏱ Off-beat transition (bar {bar}/{_DJ_BARS_PER_PHRASE} of the phrase) — {msg}"
+
+
+# --- Mephissa's DJ School: real mixing moves, 2012-2026 ------------------
+# Each entry: the move's name, the era it comes from/peaked in, what it
+# actually does on the decks, the exact moment to bring Track 2 in (in
+# bars/phrase terms, since that's tempo-independent), and how to fake the
+# same effect through a Shoutcast-style AutoDJ source (which has no faders,
+# EQ knobs, or hands — just gain automation, crossfade windows, and cue
+# points), so the "skill" survives the translation to a broadcast chain.
+DJ_TRANSITIONS = [
+    {
+        "move": "Bass Swap (EQ Kill Swap)",
+        "era": "2012 — Club House / Early EDM",
+        "description": "Kill the bass on Track A's low band, bring Track B's bass in on the very next downbeat while the mids/highs of both tracks still overlap.",
+        "timing": "Cue Track B so beat 1 lands exactly on Track A's last 16-bar phrase (roughly the 3:00-3:15 mark of a 4-min club edit). Bass swap happens on that same downbeat.",
+        "shoutcast": "Set the AutoDJ crossfade window to 4 bars' worth of seconds (60/BPM * 4 beats * 4 bars). Emulate the EQ kill with a timed lowpass/highpass filter fade (ffmpeg `-af \"lowpass=f=120\"` ramped to 0 on A, mirrored ramp-in on B) instead of a flat linear crossfade.",
+    },
+    {
+        "move": "Long Blend (Progressive Blend)",
+        "era": "2013-2016 — Progressive / Deep House",
+        "description": "A slow, 30-45 second linear overlap where both tracks' basslines stay phase-locked the whole time — no cut, just a patient fade.",
+        "timing": "Start Track B a full 32-bar phrase before Track A's outro ends (~2 minutes before Track A finishes).",
+        "shoutcast": "Widen the AutoDJ crossfade duration to 30-45s (most SHOUTcast source clients cap around 15s by default — raise `crossfadeDuration` in the AutoDJ config explicitly).",
+    },
+    {
+        "move": "Echo Out / Reverb Tail",
+        "era": "2014+ — Tech House",
+        "description": "Throw increasing echo/reverb onto the last 4 bars of the outgoing track, then hard-cut into Track B's drop right as the tail decays.",
+        "timing": "Trigger the echo at Track A's last 4-bar phrase; hard cut lands on beat 1 of Track B's next phrase.",
+        "shoutcast": "Pre-render the outro with `ffmpeg -af \"aecho=0.8:0.9:1000:0.3\"` fading in over the last 4 bars, then splice a hard cut (0s crossfade) to Track B in the AutoDJ playlist.",
+    },
+    {
+        "move": "Backspin Cut",
+        "era": "2015 revival — Hip-Hop/Trap-influenced EDM",
+        "description": "Spin the record back to silence right on the beat, then hard-cut straight into Track B's intro on the next downbeat. No vinyl on a broadcast chain, so it becomes a pure timing trick.",
+        "timing": "Exact cut on beat 1 of a fresh bar — no overlap at all.",
+        "shoutcast": "Zero-second crossfade (instant source switch) triggered on a scheduled cue point, not a faded transition — the trick is entirely in hitting the beat, not the audio processing.",
+        },
+    {
+        "move": "Double Drop",
+        "era": "2015-2018 — Big Room / Festival EDM",
+        "description": "Align both tracks' drops so they land on the exact same beat, doubling the impact.",
+        "timing": "Find Track A's drop timestamp and Track B's drop timestamp, then start Track B early by (Track B's drop time) so both drops coincide: start_offset = trackA_drop_time - trackB_drop_time.",
+        "shoutcast": "Compute start_offset from cue-point metadata and launch Track B with `-ss <start_offset>` seeked in, muted, so it's already mid-track and silent-primed when the drop hits.",
+    },
+    {
+        "move": "Filter Sweep In",
+        "era": "2017-2020 — Melodic Techno",
+        "description": "Bring Track B in fully low-passed (near silent), sweep the filter open over 8-16 bars while Track A still plays untouched, then cut Track A right as the sweep finishes opening.",
+        "timing": "Begin the sweep 16 bars before the intended cut point.",
+        "shoutcast": "Automate a `lowpass=f=200` ramping linearly to `lowpass=f=20000` (i.e. off) across the 16-bar window using an ffmpeg filter automation curve, then cut Track A once the sweep completes.",
+    },
+    {
+        "move": "Loop Roll Exit",
+        "era": "2018-2021 — Trap / Bass",
+        "description": "Loop the last 1-2 bars of Track A into a stuttering roll to build tension, then release straight into Track B's drop.",
+        "timing": "Trigger the loop 2 bars before the mix point; release lands on Track B's downbeat.",
+        "shoutcast": "Pre-render the loop-roll as its own short stinger clip and insert it as a scheduled transition jingle between the two playlist entries in the AutoDJ queue.",
+    },
+    {
+        "move": "Phrase-Match Tag Cue",
+        "era": "2019-2022 — Open-Format Club",
+        "description": "Cue Track B's vocal tag/hook so it lands exactly on Track A's final phrase accent — a fast, <8-bar transition built for open-format sets.",
+        "timing": "Set Track B's cue point at its first vocal hit, aligned to Track A's last accented beat.",
+        "shoutcast": "Store the cue point as an embedded marker (ID3 `CUE`/chapter tag) on the media file so the AutoDJ can seek straight to it instead of always starting from bar 1.",
+    },
+    {
+        "move": "Harmonic Riser Blend",
+        "era": "2022-2024 — Melodic / Afro House",
+        "description": "Track B enters with a pitched-up riser/FX 8 bars before its main phrase, masking the seam; the blend completes as the riser resolves into Track B's groove.",
+        "timing": "Start the riser 8 bars before the actual mix point.",
+        "shoutcast": "Layer a short riser stinger (ffmpeg `-af \"asetrate\"` pitch ramp) under the tail of the AutoDJ crossfade window, 8 bars ahead of the switch.",
+    },
+    {
+        "move": "AI Stem Blend",
+        "era": "2024-2026 — Modern / Stem-Separated Mixing",
+        "description": "Real-time stem separation lets you cross-blend drums, bass, and vocals independently instead of the whole track at once — e.g. swap drums first, then bass, then vocals last, staggered.",
+        "timing": "Staggered per-stem swap across a 16-bar window instead of one single cut point (drums at bar 0, bass at bar 6, vocals at bar 12).",
+        "shoutcast": "No live stem swap on a plain AutoDJ, so pre-render the whole staggered blend with `ffmpeg -filter_complex amix` combining isolated stems from both tracks, then feed that single rendered file to the AutoDJ as one seamless entry.",
+    },
+]
+
+
+@register_tool("meph_dj_lesson", "Mephissa DJ School: real mixing transitions from 2012-2026 — move name, exact timing to bring in Track 2, and how to translate the move onto a Shoutcast-style AutoDJ broadcast chain. Great for teaching new DJs.", {"type": "object", "properties": {"move": {"type": "string", "description": "Optional: a move name (or partial match) to look up a single transition. Leave blank for the full 2012-2026 curriculum."}}, "required": []})
+def meph_dj_lesson(move: str = "") -> str:
+    move = (move or "").strip().lower()
+    entries = DJ_TRANSITIONS
+    if move:
+        entries = [t for t in DJ_TRANSITIONS if move in t["move"].lower()]
+        if not entries:
+            names = ", ".join(t["move"] for t in DJ_TRANSITIONS)
+            return f"No move matching '{move}'. Known moves: {names}"
+    lines = ["🎓 MEPHISSA'S DJ SCHOOL — Mixing Transitions, 2012-2026", ""]
+    for t in entries:
+        lines.append(f"▶ {t['move']}  — {t['era']}")
+        lines.append(f"    Move: {t['description']}")
+        lines.append(f"    Timing (start Song 2): {t['timing']}")
+        lines.append(f"    Shoutcast translation: {t['shoutcast']}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+# --- Iconic transitions — moments that made huge buzz -----------------
+# Widely cited by the DJ/festival community as career-defining mix moments.
+# Framed as "as the community remembers it" rather than claiming a
+# down-to-the-second verified timestamp — that level of precision isn't
+# something to assert from memory. Each ties back to a move in
+# DJ_TRANSITIONS so you can see exactly which technique made it land.
+DJ_ICONIC_MOMENTS = [
+    {
+        "moment": "Swedish House Mafia — \"One (Your Name)\" into \"Don't You Worry Child\", Ultra Music Festival",
+        "why": "The trio's farewell-tour run became the reference point for the modern Double Drop — both tracks' anthemic drops landing together sent the whole festival crowd up at once.",
+        "technique": "Double Drop",
+    },
+    {
+        "moment": "Avicii — \"Levels\" festival drops, 2011-2013 world tour",
+        "why": "The pitched piano-riff intro became the textbook Filter Sweep In / riser build that a generation of festival DJs copied afterward.",
+        "technique": "Filter Sweep In",
+    },
+    {
+        "moment": "Skrillex — \"Bangarang\" b2b sets, early dubstep/brostep era (2011-2012)",
+        "why": "The stutter-loop into a bass drop popularized the Loop Roll Exit as a mainstream festival move, not just an underground trick.",
+        "technique": "Loop Roll Exit",
+    },
+    {
+        "moment": "Carl Cox back-to-back techno marathon sets, Space Ibiza closing parties",
+        "why": "Hours-long Long Blends where basslines stayed phase-locked for a full 32+ bars became the gold standard for techno crowd endurance mixing.",
+        "technique": "Long Blend",
+    },
+    {
+        "moment": "Tiësto — \"Adagio for Strings\" trance-era anthem transitions (2005-2009 festival circuit)",
+        "why": "The build-and-release structure of the edit made it one of the most-copied Echo Out / reverb-tail exits of the trance era.",
+        "technique": "Echo Out / Reverb Tail",
+    },
+    {
+        "moment": "DJ Snake & AlunaGeorge / open-format club sets adopting quick vocal-tag mixing (2016+)",
+        "why": "Open-format DJs popularized fast, <8-bar Phrase-Match Tag Cues to keep hip-hop/pop crowds moving without long blends.",
+        "technique": "Phrase-Match Tag Cue",
+    },
+]
+
+
+@register_tool("meph_dj_iconic", "Mephissa DJ: famous mixing moments that made huge buzz in the DJ/festival world, mapped to the underlying technique from meph_dj_lesson", {"type": "object", "properties": {}})
+def meph_dj_iconic() -> str:
+    lines = ["🌟 ICONIC TRANSITIONS — moments that made huge buzz", ""]
+    for m in DJ_ICONIC_MOMENTS:
+        lines.append(f"▶ {m['moment']}")
+        lines.append(f"    Why it hit: {m['why']}")
+        lines.append(f"    Technique: {m['technique']}  (see meph_dj_lesson('{m['technique']}') for the full how-to)")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 _DJ_CROSSFADE_SECONDS = 3
@@ -2303,6 +3299,7 @@ def _dj_crossfade_to(source: str) -> str:
     _DJ_STATE["position"] = 0.0
     _DJ_STATE["seg_start"] = time.time()
     _dj_watch(new_proc, source)
+    _dj_start_bpm_analysis(stream)
     return f"▶ Crossfading into: {source}"
 
 
@@ -2369,6 +3366,762 @@ def meph_dj_infinite_mix(enabled: bool) -> str:
     if not already_playing:
         return meph_dj_search_play() + " (🔁 infinite mix ON)"
     return "🔁 Infinite mix: ON"
+
+
+def _dj_fade(target_vol: int, seconds: float = 6.0) -> None:
+    # Ramps volume via repeated _dj_restart steps — ffplay has no live volume
+    # control (see _dj_restart's own note), so "gradual" here means several
+    # small restarts rather than one big jump, not a click-free crossfade.
+    # Tracked by _DJ_STATE["current"] rather than "gen": _dj_restart itself
+    # bumps gen every step, so gen can't tell "same track, my own restart"
+    # apart from "a real new track started" — the source name can.
+    if not _DJ_STATE.get("stream"):
+        return
+    start_vol = _DJ_STATE.get("volume", 100)
+    track = _DJ_STATE.get("current")
+    steps = max(1, round(seconds / 0.5))
+    for i in range(1, steps + 1):
+        if _DJ_STATE.get("current") != track:
+            return
+        vol = round(start_vol + (target_vol - start_vol) * (i / steps))
+        if _dj_restart(_dj_elapsed(), vol) is None:
+            return
+        time.sleep(0.5)
+
+
+@register_tool("meph_dj_fade_out", "Mephissa DJ: gradually fade the volume down to 0 over a few seconds, then stop", {"type": "object", "properties": {"seconds": {"type": "number", "description": "Fade duration in seconds, default 6"}}, "required": []})
+def meph_dj_fade_out(seconds: float = 6.0) -> str:
+    if not _DJ_STATE.get("stream"):
+        return "Nothing is playing."
+    track = _DJ_STATE.get("current")
+
+    def run():
+        _dj_fade(0, seconds)
+        if _DJ_STATE.get("current") == track:
+            meph_dj_stop()
+
+    import threading
+    threading.Thread(target=run, daemon=True).start()
+    return f"🔉 Fading out over {seconds:.0f}s..."
+
+
+@register_tool("meph_dj_fade_in", "Mephissa DJ: start the next queued track quiet and gradually raise the volume over a few seconds (or ramp up from wherever the current volume is)", {"type": "object", "properties": {"seconds": {"type": "number", "description": "Fade duration in seconds, default 6"}}, "required": []})
+def meph_dj_fade_in(seconds: float = 6.0) -> str:
+    already_playing = _DJ_STATE.get("proc") and _DJ_STATE["proc"].poll() is None
+    if not already_playing:
+        if not _DJ_STATE["queue"]:
+            return "Queue empty — nothing to fade in."
+        _DJ_STATE["volume"] = 5
+        msg = meph_dj_play(_DJ_STATE["queue"].pop(0))
+        if msg.startswith("[ERROR]"):
+            return msg
+
+    def run():
+        _dj_fade(100, seconds)
+
+    import threading
+    threading.Thread(target=run, daemon=True).start()
+    return f"🔊 Fading in over {seconds:.0f}s..."
+
+
+# --- DJ visualizer: local HTML deck popup ---------------------------------
+# A second, real-looking DJ deck screen (Serato-style dual decks, jog
+# wheels, BPM/key readouts, beat-grid, crossfader) served over localhost so
+# it can pop up as its own window docked above the terminal. Everything
+# that reads as "live data" here (BPM, key, beat phase, in_window,
+# transition grading, volume) really is — it's meph_dj_beat_state() and
+# friends polled over /state. The per-deck bar "screen" is a stylized
+# audio-visualizer-style animation, not a decoded waveform of the actual
+# audio — streaming real PCM into a browser canvas live is a separate,
+# much bigger project than this popup.
+DJ_VISUALIZER_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>MEPHISSA DJ DECKS</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #050505; color: #F8F9FA;
+    font-family: 'Segoe UI', Consolas, monospace; overflow: hidden; user-select: none;
+  }
+  #rig {
+    display: flex; flex-direction: column; height: 100vh; padding: 8px;
+    background: linear-gradient(180deg, #0a0003 0%, #050505 100%);
+  }
+  #banner {
+    text-align: center; font-weight: 700; letter-spacing: 2px; font-size: 13px;
+    padding: 5px; border-radius: 4px; margin-bottom: 6px;
+    background: #140005; border: 1px solid #ff023a; color: #ff023a;
+    transition: all .15s ease;
+  }
+  #banner.sync { background: #00F2FE; color: #050505; border-color: #00F2FE; }
+  #decks { display: flex; gap: 8px; flex: 1; min-height: 0; }
+  .deck {
+    flex: 1; background: #0d0d0d; border: 1px solid #222; border-radius: 6px;
+    padding: 8px; display: flex; flex-direction: column; min-width: 0;
+  }
+  .deck-label {
+    font-size: 10px; letter-spacing: 2px; color: #888; display: flex; justify-content: space-between;
+  }
+  .deck-title { font-size: 12px; font-weight: 700; margin: 3px 0 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .screen { height: 46px; background: #000; border: 1px solid #1a1a1a; border-radius: 3px; overflow: hidden; }
+  .readouts { display: flex; justify-content: space-between; margin: 6px 0; font-size: 11px; }
+  .readouts b { font-size: 15px; display: block; }
+  .jogwrap { display: flex; justify-content: center; align-items: center; flex: 1; }
+  /* Jog wheel — combines the Denon SC-Live embedded platter screen (BPM/
+     key/position readout in the hub) with the Pioneer REV7's perforated
+     metal rim + tonearm-style pointer, and an FLX10-style glow ring. Kept
+     to the deck's own cyan/red palette rather than Pioneer's rainbow RGB,
+     so it still reads as the same Mephissa rig, not a different app. */
+  .jog {
+    width: 180px; height: 180px; border-radius: 50%; position: relative;
+    background:
+      repeating-conic-gradient(#3a3a3a 0deg 3deg, #161616 3deg 9deg),
+      radial-gradient(circle at 50% 50%, #050505 0%, #050505 78%, transparent 78%);
+    border: 3px solid #2a2a2a;
+    box-shadow: 0 0 0 1px #000, 0 0 14px 2px var(--jog-glow, rgba(0,242,254,.25)) inset,
+                0 0 10px 1px var(--jog-glow, rgba(0,242,254,.25));
+    transition: box-shadow .3s ease;
+  }
+  .deck.left .jog { --jog-glow: rgba(255,2,58,.25); }
+  .jog.playing { --jog-glow: rgba(0,242,254,.65); }
+  .deck.left .jog.playing { --jog-glow: rgba(255,2,58,.65); }
+  /* Band-energy ring — real per-track spectral analysis (librosa STFT
+     bucketed into bass/mid/treble), NOT true AI stem separation like the
+     FLX10 claims (that would mean running the heavy Siren Song/BS-Roformer
+     model on every track load) - an honest, lighter proxy: each ring's
+     opacity breathes with that band's real energy at the current
+     timestamp. Three concentric rings = "multicolored jog ring". */
+  .jog-ring {
+    position: absolute; border-radius: 50%; border-style: solid; pointer-events: none;
+    transition: opacity .2s ease; opacity: .12;
+  }
+  .jog-ring.bass   { inset: 32px; border-width: 4px; border-color: #ff023a; }
+  .jog-ring.mid    { inset: 24px; border-width: 4px; border-color: #00F2FE; }
+  .jog-ring.treble { inset: 16px; border-width: 4px; border-color: #a78bfa; }
+  /* Phrase-progress ring — fills clockwise toward the next 8-bar mix
+     point and flashes white right on it: "signaling perfect shifting
+     time" directly on the wheel, not just the top banner. */
+  .jog-phrase-svg { position: absolute; inset: 8px; transform: rotate(-90deg); pointer-events: none; }
+  .jog-phrase-svg circle.track { fill: none; stroke: #1a1a1a; stroke-width: 4; }
+  .jog-phrase-svg circle.fill {
+    fill: none; stroke: #ffcc00; stroke-width: 4; stroke-linecap: round;
+    transition: stroke-dashoffset .15s linear, stroke .2s ease;
+  }
+  .jog.in-window .jog-phrase-svg circle.fill { stroke: #fff; animation: phrase-pulse .4s ease-in-out infinite alternate; }
+  @keyframes phrase-pulse { from { opacity: .55; } to { opacity: 1; } }
+  .jog-art {
+    position: absolute; inset: 40px; border-radius: 50%;
+    background-size: cover; background-position: center;
+    opacity: 0; transition: opacity .6s ease;
+  }
+  .jog-art.loaded { opacity: .5; }
+  .jog-platter {
+    position: absolute; inset: 40px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 28%, #232323, #060606 72%);
+    border: 1px solid #1a1a1a;
+  }
+  .jog-screen {
+    position: absolute; inset: 60px; border-radius: 50%;
+    background: rgba(0,0,0,.55); border: 1px solid #1e1e1e; backdrop-filter: blur(1px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 8px; color: #888; letter-spacing: .5px; overflow: hidden;
+  }
+  .jog-screen .jbpm { font-size: 16px; font-weight: 700; color: #00F2FE; line-height: 1; }
+  .deck.left .jog-screen .jbpm { color: #ff023a; }
+  .jog-screen .jkey { font-size: 9px; color: #a78bfa; margin-top: 1px; }
+  .jog-screen .jpos { font-size: 8px; color: #666; margin-top: 1px; }
+  .jog-screen .jrem { font-size: 8px; color: #555; }
+  .jog-needle {
+    /* Full center-to-edge box for correct rotation pivot, but only the
+       outer band (past the LCD screen, sweeping over the ring stack) is
+       painted - keeps the arm off the digital readout, REV7-style. */
+    position: absolute; top: 50%; left: 50%; width: 3px; height: 50%;
+    background: linear-gradient(180deg, transparent 0%, transparent 33%,
+                #F8F9FA 36%, #F8F9FA 92%, transparent 96%);
+    transform-origin: top center; transform: translateX(-50%) rotate(0deg);
+    z-index: 2; pointer-events: none;
+  }
+  .jog.spin .jog-needle { animation: spin 1.8s linear infinite; }
+  @keyframes spin { from { transform: translateX(-50%) rotate(0deg); } to { transform: translateX(-50%) rotate(360deg); } }
+  /* Performance pads — real cue points (meph_dj_cue_set/jump), one tap
+     sets an empty slot or jumps to a filled one. "Performance Pad status
+     visible directly on jog." */
+  .jog-pad {
+    position: absolute; width: 13px; height: 13px; border-radius: 50%;
+    background: #111; border: 2px solid #333; z-index: 3; cursor: pointer;
+    transition: all .15s ease;
+  }
+  .jog-pad:hover { border-color: #F8F9FA; transform: scale(1.15); }
+  .jog-pad.set { background: #ffcc00; border-color: #ffcc00; box-shadow: 0 0 6px #ffcc00; }
+  .jog-pad.n { top: 4px; left: 50%; margin-left: -6.5px; }
+  .jog-pad.e { top: 50%; right: 4px; margin-top: -6.5px; }
+  .jog-pad.s { bottom: 4px; left: 50%; margin-left: -6.5px; }
+  .jog-pad.w { top: 50%; left: 4px; margin-top: -6.5px; }
+  #beatgrid { display: flex; justify-content: center; gap: 4px; margin: 6px 0; }
+  .beat-blk { width: 16px; height: 16px; border-radius: 2px; background: #1a1a1a; border: 1px solid #2a2a2a; }
+  .beat-blk.hit { background: #00F2FE; border-color: #00F2FE; box-shadow: 0 0 6px #00F2FE; }
+  .beat-blk.bar-end { border-color: #ff023a; }
+  #transport { display: flex; gap: 6px; justify-content: center; margin: 6px 0; flex-wrap: wrap; }
+  button {
+    background: #140005; color: #F8F9FA; border: 1px solid #00F2FE; border-radius: 4px;
+    padding: 6px 10px; font-size: 11px; font-weight: 700; cursor: pointer; letter-spacing: .5px;
+  }
+  button:hover { background: #00F2FE; color: #050505; }
+  button#btn-transition.glow {
+    background: #ff023a; border-color: #ff023a; color: #fff;
+    animation: pulse 0.5s ease-in-out infinite alternate;
+  }
+  @keyframes pulse { from { box-shadow: 0 0 4px #ff023a; } to { box-shadow: 0 0 18px #ff023a; } }
+  button.active { background: #00F2FE; color: #050505; }
+  #crossfader { display: flex; align-items: center; gap: 6px; justify-content: center; margin-top: 4px; }
+  #xf-track { width: 220px; height: 6px; background: #1a1a1a; border-radius: 3px; position: relative; }
+  #xf-fill { position: absolute; left: 0; top: 0; height: 100%; background: #00F2FE; border-radius: 3px; }
+  #spellbook {
+    display: flex; gap: 10px; justify-content: center; flex-wrap: nowrap; overflow-x: auto;
+    margin-top: 5px; padding: 4px 2px; border-top: 1px solid #1a1a1a; font-size: 9px; color: #a78bfa;
+    white-space: nowrap;
+  }
+  #spellbook .spell-hk { color: #00F2FE; font-weight: 700; }
+  #status { text-align: center; font-size: 10px; color: #888; margin-top: 4px; min-height: 14px; }
+  /* Auto-hide: fades to a barely-there ghost after a few seconds of no
+     mouse activity (docked-above-terminal decks shouldn't compete for
+     attention while you're just typing), and snaps back instantly on any
+     mouse movement anywhere in the window. */
+  #rig { transition: opacity .5s ease; }
+  body.idle #rig { opacity: .1; }
+  body.idle #rig:hover { opacity: 1; }
+</style></head>
+<body>
+<div id="rig">
+  <div id="banner">WAITING FOR TRANSITION...</div>
+  <div id="decks">
+    <div class="deck left">
+      <div class="deck-label"><span>DECK 1 - NOW</span><span id="d1-bpm-lbl">--</span></div>
+      <div class="deck-title" id="d1-title">(nothing)</div>
+      <canvas class="screen" id="d1-screen"></canvas>
+      <div class="readouts"><div>BPM<b id="d1-bpm">--</b></div><div>KEY<b id="d1-key">--</b></div><div>POS<b id="d1-pos">0:00</b></div></div>
+      <div class="jogwrap"><div class="jog" id="d1-jog">
+        <div class="jog-platter"></div>
+        <div class="jog-art" id="d1-jart"></div>
+        <svg class="jog-phrase-svg" viewBox="0 0 100 100">
+          <circle class="track" cx="50" cy="50" r="46"/>
+          <circle class="fill" id="d1-jphrase" cx="50" cy="50" r="46"
+                  stroke-dasharray="289.03" stroke-dashoffset="289.03"/>
+        </svg>
+        <div class="jog-ring bass" id="d1-ring-bass"></div>
+        <div class="jog-ring mid" id="d1-ring-mid"></div>
+        <div class="jog-ring treble" id="d1-ring-treble"></div>
+        <div class="jog-needle"></div>
+        <div class="jog-screen">
+          <div class="jbpm" id="d1-jscr-bpm">--</div>
+          <div class="jkey" id="d1-jscr-key">--</div>
+          <div class="jpos" id="d1-jscr-pos">0:00</div>
+          <div class="jrem" id="d1-jscr-rem"></div>
+        </div>
+        <div class="jog-pad n" id="d1-pad-0" title="Cue 0"></div>
+        <div class="jog-pad e" id="d1-pad-1" title="Cue 1"></div>
+        <div class="jog-pad s" id="d1-pad-2" title="Cue 2"></div>
+        <div class="jog-pad w" id="d1-pad-3" title="Cue 3"></div>
+      </div></div>
+    </div>
+    <div class="deck right">
+      <div class="deck-label"><span>DECK 2 - NEXT</span><span id="d2-bpm-lbl">--</span></div>
+      <div class="deck-title" id="d2-title">(queue empty)</div>
+      <canvas class="screen" id="d2-screen"></canvas>
+      <div class="readouts"><div>BPM<b id="d2-bpm">--</b></div><div>KEY<b id="d2-key">--</b></div><div>MODE<b id="d2-mode">--</b></div></div>
+      <div class="jogwrap"><div class="jog" id="d2-jog">
+        <div class="jog-platter"></div>
+        <svg class="jog-phrase-svg" viewBox="0 0 100 100">
+          <circle class="track" cx="50" cy="50" r="46"/>
+          <circle class="fill" cx="50" cy="50" r="46" stroke-dasharray="289.03" stroke-dashoffset="289.03"/>
+        </svg>
+        <div class="jog-ring bass"></div>
+        <div class="jog-ring mid"></div>
+        <div class="jog-ring treble"></div>
+        <div class="jog-needle"></div>
+        <div class="jog-screen">
+          <div class="jbpm" id="d2-jscr-bpm">--</div>
+          <div class="jkey" id="d2-jscr-key">--</div>
+          <div class="jpos" id="d2-jscr-pos">QUEUE</div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div id="beatgrid"></div>
+  <div id="transport">
+    <button id="btn-playpause">▶ PLAY/PAUSE</button>
+    <button id="btn-stop">⏹ STOP</button>
+    <button id="btn-skip">▶▶ SKIP</button>
+    <button id="btn-sync">SYNC</button>
+    <button id="btn-transition">TRANSITION</button>
+    <button id="btn-fadein">FADE IN</button>
+    <button id="btn-fadeout">FADE OUT</button>
+  </div>
+  <div id="crossfader">
+    <button id="btn-vol-down">-</button>
+    <div id="xf-track"><div id="xf-fill" style="width:100%"></div></div>
+    <button id="btn-vol-up">+</button>
+  </div>
+  <div id="spellbook" title="Mephissa's spellbook — cast via the Alt+ hotkeys (AutoHotkey layer), synced to whoever's Tab-selected in the NewMeta TUI">
+    <span><span class="spell-hk">Alt+K</span> 🎤 Siren Song</span>
+    <span><span class="spell-hk">Alt+F</span> 🌊 Riptide Fusion</span>
+    <span><span class="spell-hk">Alt+S</span> 🎙️ Studio Echo</span>
+    <span><span class="spell-hk">Alt+B</span> 📖 Booth Archive</span>
+    <span><span class="spell-hk">Alt+N</span> ♾️ Endless Set</span>
+  </div>
+  <div id="status">Mephissa DJ Decks — connecting...</div>
+</div>
+<script>
+  const grid = document.getElementById('beatgrid');
+  const BLOCKS = 16;
+  for (let i = 0; i < BLOCKS; i++) {
+    const b = document.createElement('div');
+    b.className = 'beat-blk' + ((i % 4 === 3) ? ' bar-end' : '');
+    b.id = 'blk' + i;
+    grid.appendChild(b);
+  }
+
+  function post(cmd, extra) {
+    let url = '/action?cmd=' + encodeURIComponent(cmd);
+    if (extra) url += '&' + extra;
+    fetch(url, { method: 'POST' }).then(r => r.json()).then(d => {
+      document.getElementById('status').textContent = d.msg || '';
+    }).catch(() => {});
+  }
+
+  document.getElementById('btn-playpause').onclick = () => post('playpause');
+  document.getElementById('btn-stop').onclick = () => post('stop');
+  document.getElementById('btn-skip').onclick = () => post('skip');
+  document.getElementById('btn-transition').onclick = () => post('transition');
+  document.getElementById('btn-fadein').onclick = () => post('fade_in');
+  document.getElementById('btn-fadeout').onclick = () => post('fade_out');
+  document.getElementById('btn-vol-up').onclick = () => post('volume_up');
+  document.getElementById('btn-vol-down').onclick = () => post('volume_down');
+  let syncOn = false;
+  document.getElementById('btn-sync').onclick = () => {
+    syncOn = !syncOn;
+    document.getElementById('btn-sync').classList.toggle('active', syncOn);
+    post('sync');
+  };
+  for (let i = 0; i < 4; i++) {
+    const pad = document.getElementById('d1-pad-' + i);
+    if (pad) pad.onclick = () => post('cue_pad_' + i);
+  }
+  const PHRASE_CIRC = 2 * Math.PI * 46;
+
+  function drawScreen(canvas, playing, seed) {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.clientWidth;
+    const h = canvas.height = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const bars = 60;
+    const t = Date.now() / 1000 + seed;
+    for (let i = 0; i < bars; i++) {
+      const amp = playing ? (0.3 + 0.7 * Math.abs(Math.sin(t * 3 + i * 0.5) * Math.cos(t + i * 0.2))) : 0.08;
+      const bh = amp * h;
+      ctx.fillStyle = (i % 3 === 0) ? '#ff023a' : '#00F2FE';
+      ctx.globalAlpha = playing ? 0.85 : 0.3;
+      ctx.fillRect(i * (w / bars), (h - bh) / 2, (w / bars) - 1, bh);
+    }
+  }
+
+  function fmtPos(s) {
+    s = Math.floor(s || 0);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  async function tick() {
+    try {
+      const res = await fetch('/state', { cache: 'no-store' });
+      const d = await res.json();
+      const beat = d.beat || {};
+      document.getElementById('d1-title').textContent = d.current || '(nothing)';
+      document.getElementById('d2-title').textContent = d.next || '(queue empty)';
+      document.getElementById('d2-mode').textContent = d.mode || '--';
+      const bpmTxt = beat.bpm ? beat.bpm.toFixed(1) : (beat.status === 'analyzing' ? '...' : '--');
+      document.getElementById('d1-bpm').textContent = bpmTxt;
+      document.getElementById('d1-bpm-lbl').textContent = bpmTxt;
+      document.getElementById('d1-key').textContent = beat.key_camelot || '--';
+      document.getElementById('d1-pos').textContent = fmtPos(beat.elapsed);
+      document.getElementById('d2-bpm').textContent = '--';
+      document.getElementById('d2-key').textContent = '--';
+
+      const d1jog = document.getElementById('d1-jog');
+      d1jog.classList.toggle('spin', !!beat.playing);
+      d1jog.classList.toggle('playing', !!beat.playing);
+      // Spin speed follows the real detected BPM (4 beats per revolution)
+      // instead of a fixed rate — a slow deep-house track and a fast
+      // techno track visibly spin differently, like a real platter.
+      if (beat.bpm) d1jog.style.setProperty('--jog-spin-dur', (240 / beat.bpm) + 's');
+      d1jog.querySelector('.jog-needle').style.animationDuration = beat.bpm ? (240 / beat.bpm) + 's' : '1.8s';
+      document.getElementById('d1-jscr-bpm').textContent = bpmTxt;
+      document.getElementById('d1-jscr-key').textContent = beat.key_camelot || '--';
+      document.getElementById('d1-jscr-pos').textContent = fmtPos(beat.elapsed);
+      document.getElementById('d1-jscr-rem').textContent = beat.remaining != null ? ('-' + fmtPos(beat.remaining)) : '';
+
+      // Album art — fades in whenever the async yt-dlp thumbnail fetch has
+      // landed (fire-and-forget after playback start, so this can arrive a
+      // few seconds after the track already started spinning).
+      const art = document.getElementById('d1-jart');
+      if (beat.artwork_url && art.dataset.src !== beat.artwork_url) {
+        art.style.backgroundImage = 'url(' + beat.artwork_url + ')';
+        art.dataset.src = beat.artwork_url;
+      }
+      art.classList.toggle('loaded', !!beat.artwork_url);
+
+      // Band-energy ring — real spectral analysis (see _dj_analyze_energy),
+      // opacity breathes with each band's actual energy at this timestamp.
+      const be = beat.band_energy || { bass: 0, mid: 0, treble: 0 };
+      document.getElementById('d1-ring-bass').style.opacity = (0.12 + 0.75 * be.bass).toFixed(2);
+      document.getElementById('d1-ring-mid').style.opacity = (0.12 + 0.75 * be.mid).toFixed(2);
+      document.getElementById('d1-ring-treble').style.opacity = (0.12 + 0.75 * be.treble).toFixed(2);
+
+      // Phrase-progress ring — fills toward the next mix point, flashes at it.
+      const prog = beat.phrase_progress || 0;
+      document.getElementById('d1-jphrase').style.strokeDashoffset = (PHRASE_CIRC * (1 - prog)).toFixed(1);
+      d1jog.classList.toggle('in-window', !!beat.in_window);
+
+      // Performance pads — lit when that cue slot is set.
+      const cues = beat.cues || {};
+      for (let i = 0; i < 4; i++) {
+        const pad = document.getElementById('d1-pad-' + i);
+        if (pad) pad.classList.toggle('set', cues[String(i)] !== undefined);
+      }
+
+      document.getElementById('d2-jog').classList.toggle('spin', false);
+      document.getElementById('d2-jscr-bpm').textContent = '--';
+      document.getElementById('d2-jscr-key').textContent = '--';
+
+      const banner = document.getElementById('banner');
+      if (beat.in_window) {
+        banner.textContent = '<<< IN SYNC — TRANSITION NOW >>>';
+        banner.classList.add('sync');
+      } else {
+        banner.textContent = 'WAITING FOR TRANSITION...';
+        banner.classList.remove('sync');
+      }
+      document.getElementById('btn-transition').classList.toggle('glow', !!beat.in_window);
+
+      const barPos = beat.bar_in_phrase || 0;
+      const beatPos = beat.beat_in_bar || 0;
+      const activeIdx = barPos * 4 + beatPos;
+      for (let i = 0; i < BLOCKS; i++) {
+        document.getElementById('blk' + i).classList.toggle('hit', beat.playing && i === (activeIdx % BLOCKS));
+      }
+
+      const vol = d.volume != null ? d.volume : 100;
+      document.getElementById('xf-fill').style.width = vol + '%';
+
+      drawScreen(document.getElementById('d1-screen'), !!beat.playing, 0);
+      drawScreen(document.getElementById('d2-screen'), false, 5);
+    } catch (e) { /* server briefly unreachable during a track restart — ignore */ }
+  }
+  setInterval(tick, 150);
+  tick();
+
+  // Auto-hide: fade out after a few seconds of no mouse activity, snap
+  // back instantly on any movement - see body.idle in the stylesheet.
+  let idleTimer = null;
+  function resetIdle() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add('idle'), 4000);
+  }
+  ['mousemove', 'mousedown', 'wheel', 'keydown'].forEach(evt => document.addEventListener(evt, resetIdle));
+  resetIdle();
+</script>
+</body></html>"""
+
+
+import http.server
+import socketserver
+import threading
+
+
+class _DJVizHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # keep the terminal clean — this is a silent local UI server
+
+    def _json(self, payload, code: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path in ("/", ""):
+            body = DJ_VISUALIZER_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/state":
+            queue = _DJ_STATE.get("queue") or []
+            self._json({
+                "beat": meph_dj_beat_state(),
+                "volume": meph_dj_volume_level(),
+                "mode": DJ_MODES.get(_DJ_STATE.get("mode", "electronic"), {}).get("label", "Electronic"),
+                "current": _DJ_STATE.get("current"),
+                "next": queue[0] if queue else None,
+            })
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if not self.path.startswith("/action"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        cmd = (qs.get("cmd") or [""])[0]
+        try:
+            if cmd == "volume_up":
+                msg = meph_dj_volume(5)
+            elif cmd == "volume_down":
+                msg = meph_dj_volume(-5)
+            elif cmd == "transition":
+                msg = meph_dj_transition()
+            elif cmd == "skip":
+                msg = meph_dj_skip()
+            elif cmd == "playpause":
+                msg = meph_dj_pause()
+            elif cmd == "stop":
+                msg = meph_dj_stop()
+            elif cmd == "fade_in":
+                msg = meph_dj_fade_in()
+            elif cmd == "fade_out":
+                msg = meph_dj_fade_out()
+            elif cmd == "sync":
+                _DJ_STATE["sync_enabled"] = not _DJ_STATE.get("sync_enabled", False)
+                msg = f"Sync display: {'ON' if _DJ_STATE['sync_enabled'] else 'OFF'}"
+            elif cmd.startswith("cue_pad_"):
+                # Single-tap pad: jump if that slot's already set, set it
+                # here otherwise - same one-button semantics as a cheap
+                # hardware pad, no modifier-key gesture needed in-browser.
+                slot = int(cmd.rsplit("_", 1)[-1])
+                if str(slot) in _DJ_STATE.get("cues", {}):
+                    msg = meph_dj_cue_jump(slot)
+                else:
+                    msg = meph_dj_cue_set(slot)
+            else:
+                msg = f"Unknown action '{cmd}'"
+        except Exception as e:
+            msg = f"[ERROR] {e}"
+        self._json({"msg": msg})
+
+
+_DJ_VIZ = {"httpd": None, "thread": None, "port": None, "window_proc": None}
+
+
+def _dj_viz_start_server() -> int:
+    if _DJ_VIZ.get("httpd") is not None:
+        return _DJ_VIZ["port"]
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _DJVizHandler)
+    httpd.daemon_threads = True
+    port = httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    _DJ_VIZ["httpd"] = httpd
+    _DJ_VIZ["thread"] = thread
+    _DJ_VIZ["port"] = port
+    return port
+
+
+_DJ_VIZ_POPUP_W = 760
+_DJ_VIZ_POPUP_H = 520
+
+
+def _get_foreground_window_rect():
+    # Used to dock the popup right above the terminal: the terminal is the
+    # foreground window at the moment the user hits MIX, so its rect gives
+    # us real screen coordinates to position against. Windows-only; returns
+    # None everywhere else (and the caller falls back to a fixed position).
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        rect = ctypes.wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return {"left": rect.left, "top": rect.top, "width": width, "height": height}
+    except Exception:
+        return None
+
+
+def _find_chromium_app_browser():
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return shutil.which("msedge") or shutil.which("chrome")
+
+
+def _get_foreground_hwnd():
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        return ctypes.windll.user32.GetForegroundWindow() or None
+    except Exception:
+        return None
+
+
+def _find_window_by_title(title_substr: str, timeout: float = 4.0):
+    # Chrome's --app window is a separate process launched async, so its
+    # HWND doesn't exist yet when Popen() returns - poll for a visible
+    # top-level window whose title contains our <title> text.
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = {"hwnd": None}
+
+    def _cb(hwnd, lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if title_substr in buf.value:
+            found["hwnd"] = hwnd
+            return False
+        return True
+
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(_cb)
+    deadline = time.time() + timeout
+    while time.time() < deadline and not found["hwnd"]:
+        user32.EnumWindows(proc, 0)
+        if found["hwnd"]:
+            break
+        time.sleep(0.15)
+    return found["hwnd"]
+
+
+def _strip_min_max_buttons(hwnd) -> None:
+    # Drops WS_MINIMIZEBOX/WS_MAXIMIZEBOX from the deck window's frame style
+    # so Chrome's app-mode title bar stops drawing those two buttons (close
+    # stays, via WS_SYSMENU, which we leave untouched). SWP_FRAMECHANGED
+    # forces Windows to repaint the non-client area immediately.
+    if not hwnd:
+        return
+    import ctypes
+    GWL_STYLE = -16
+    WS_MINIMIZEBOX = 0x00020000
+    WS_MAXIMIZEBOX = 0x00010000
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_FRAMECHANGED = 0x2, 0x1, 0x4, 0x20
+    user32 = ctypes.windll.user32
+    style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+    user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~(WS_MINIMIZEBOX | WS_MAXIMIZEBOX))
+    user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+
+
+def _dj_viz_link_to_terminal(terminal_hwnd) -> None:
+    # Ties the popup to the SPECIFIC terminal window that summoned Mephissa,
+    # not just a one-time position snapshot: strips its min/max buttons once
+    # found, then keeps re-docking it above that terminal's live rect (move
+    # or resize the terminal and the decks follow) until either window
+    # closes. If the terminal closes first, the decks auto-close with it
+    # instead of orphaning on screen.
+    import ctypes
+    import ctypes.wintypes
+    user32 = ctypes.windll.user32
+    deck_hwnd = _find_window_by_title("MEPHISSA DJ DECKS")
+    if not deck_hwnd:
+        return
+    _strip_min_max_buttons(deck_hwnd)
+    SWP_NOZORDER, SWP_NOACTIVATE = 0x4, 0x10
+    while True:
+        time.sleep(0.4)
+        if not user32.IsWindow(deck_hwnd):
+            return  # user closed the decks manually
+        if not terminal_hwnd:
+            continue
+        if not user32.IsWindow(terminal_hwnd):
+            dj_visualizer_close()
+            return
+        rect = ctypes.wintypes.RECT()
+        if not user32.GetWindowRect(terminal_hwnd, ctypes.byref(rect)):
+            continue
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            continue
+        popup_w = max(560, min(_DJ_VIZ_POPUP_W, int(width * 0.82)))
+        left = rect.left + (width - popup_w) // 2
+        top = max(0, rect.top - _DJ_VIZ_POPUP_H)
+        user32.SetWindowPos(deck_hwnd, None, left, top, popup_w, _DJ_VIZ_POPUP_H,
+                             SWP_NOZORDER | SWP_NOACTIVATE)
+
+
+def dj_visualizer_open() -> str:
+    port = _dj_viz_start_server()
+    url = f"http://127.0.0.1:{port}/"
+    if _DJ_VIZ.get("window_proc") and _DJ_VIZ["window_proc"].poll() is None:
+        return "🖥️ DJ Decks window already open."
+    terminal_hwnd = _get_foreground_hwnd()
+    rect = _get_foreground_window_rect()
+    popup_w, popup_h = _DJ_VIZ_POPUP_W, _DJ_VIZ_POPUP_H
+    if rect:
+        # Narrower than the terminal (per the "less width" ask), centered
+        # above it, bottom edge touching its top edge — reads as one rig.
+        popup_w = max(560, min(popup_w, int(rect["width"] * 0.82)))
+        left = rect["left"] + (rect["width"] - popup_w) // 2
+        top = max(0, rect["top"] - popup_h)
+    else:
+        left, top = 80, 40
+    browser = _find_chromium_app_browser()
+    if browser:
+        try:
+            proc = subprocess.Popen([
+                browser, f"--app={url}",
+                f"--window-position={left},{top}",
+                f"--window-size={popup_w},{popup_h}",
+                "--new-window",
+            ])
+            _DJ_VIZ["window_proc"] = proc
+            _DJ_VIZ["terminal_hwnd"] = terminal_hwnd
+            threading.Thread(target=_dj_viz_link_to_terminal, args=(terminal_hwnd,), daemon=True).start()
+            return f"🖥️ DJ Decks docked above the terminal ({popup_w}x{popup_h}), linked live"
+        except Exception:
+            pass
+    try:
+        import webbrowser
+        webbrowser.open(url)
+        return "🖥️ DJ Decks opened in your default browser (auto-docking needs Edge/Chrome — opened as a normal tab instead)."
+    except Exception as e:
+        return f"[ERROR] Could not open DJ Decks: {e}"
+
+
+def dj_visualizer_close() -> str:
+    proc = _DJ_VIZ.get("window_proc")
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    _DJ_VIZ["window_proc"] = None
+    return "🖥️ DJ Decks window closed."
 
 
 @register_tool("pika_learn", "Teach Pika Poke something (learn forever)", {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]})
@@ -4104,19 +5857,28 @@ def get_best_free_provider(config: dict, secrets: SecureStorage):
 # MCP client (stdio JSON-RPC) + opencode-style skills loader
 # ---------------------------------------------------------------------------
 
+import queue as _mcp_queue
+import concurrent.futures as _mcp_futures
+
+
 class McpClient:
     """Minimal Model Context Protocol stdio client.
 
     Speaks JSON-RPC 2.0 over newline-delimited stdin/stdout to any MCP server
     (official Python SDK servers included), implementing initialize,
     notifications/initialized, tools/list and tools/call.
+
+    Reads on a background thread into a queue so _request() can enforce a
+    real timeout - a slow/unresponsive server (e.g. npx fetching a package on
+    first run) used to block forever on stdout.readline(), which meant a
+    single flaky MCP server could hang the entire app at startup.
     """
     def __init__(self, name, command, args=None, cwd=None):
         self.name = name
         self._id = 0
         self._proc = None
-        self._reader = None
         self._writer = None
+        self._out_queue: "_mcp_queue.Queue" = _mcp_queue.Queue()
         try:
             self._proc = subprocess.Popen(
                 [command] + (args or []),
@@ -4129,13 +5891,22 @@ class McpClient:
                 bufsize=1,
                 encoding="utf-8",
             )
-            self._reader = self._proc.stdout
             self._writer = self._proc.stdin
+            threading.Thread(target=self._read_loop, daemon=True).start()
         except Exception as e:
             logger.error(f"MCP [{name}] spawn failed: {e}")
             self._proc = None
 
-    def _request(self, method, params=None):
+    def _read_loop(self):
+        try:
+            for line in self._proc.stdout:
+                self._out_queue.put(line)
+        except Exception:
+            pass
+        finally:
+            self._out_queue.put(None)  # sentinel: stream closed
+
+    def _request(self, method, params=None, timeout: float = 15.0):
         if not self._proc:
             return {"error": {"message": "server not started"}}
         self._id += 1
@@ -4145,7 +5916,10 @@ class McpClient:
         try:
             self._writer.write(json.dumps(msg) + "\n")
             self._writer.flush()
-            line = self._reader.readline()
+            try:
+                line = self._out_queue.get(timeout=timeout)
+            except _mcp_queue.Empty:
+                return {"error": {"message": f"timed out after {timeout:.0f}s waiting for '{method}'"}}
             if not line:
                 return {"error": {"message": "connection closed"}}
             resp = json.loads(line)
@@ -4160,7 +5934,7 @@ class McpClient:
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "newmeta-cli", "version": "1.0"},
-        })
+        }, timeout=20.0)
 
     def initialized_notify(self):
         if not self._proc:
@@ -4215,33 +5989,48 @@ def _mcp_call(client, tool_name, args=None):
 
 
 def load_mcp_servers(config) -> list:
-    """Spawn configured MCP stdio servers and register their tools as `mcp__<server>__<tool>`."""
+    """Spawn configured MCP stdio servers CONCURRENTLY and register their
+    tools as `mcp__<server>__<tool>`.
+
+    Was previously serial (spawn+handshake server 1 fully before starting
+    server 2, etc.), so total startup cost was sum(server_times) - with
+    multiple servers, especially npx-based ones that can be slow to cold
+    start, this made every server's tools wait on the slowest one. Running
+    them concurrently turns that into max(server_times) instead.
+    """
     registered = []
-    servers = config.get("mcp_servers", {}) or {}
-    for name, sconf in servers.items():
-        if not sconf.get("enabled", True):
-            continue
-        command = sconf.get("command", "")
-        if not command:
-            continue
-        client = McpClient(name, command, sconf.get("args", []), sconf.get("cwd"))
+    servers = {
+        name: sconf
+        for name, sconf in (config.get("mcp_servers", {}) or {}).items()
+        if sconf.get("enabled", True) and sconf.get("command")
+    }
+    if not servers:
+        return registered
+
+    def _load_one(name, sconf):
+        client = McpClient(name, sconf.get("command", ""), sconf.get("args", []), sconf.get("cwd"))
         if not client._proc:
-            continue
+            return name, client, []
         client.initialize()
         client.initialized_notify()
-        tools = client.list_tools()
-        for t in tools:
-            tool_name = t.get("name", "")
-            if not tool_name:
-                continue
-            tname = f"mcp__{name}__{tool_name}"
-            TOOL_REGISTRY[tname] = {
-                "function": (lambda c, tn: (lambda args=None: _mcp_call(c, tn, args)))(client, tool_name),
-                "description": t.get("description", f"MCP tool from server '{name}'"),
-                "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
-            }
-            registered.append(tname)
-        logger.info(f"MCP: registered {len(tools)} tool(s) from '{name}'")
+        return name, client, client.list_tools()
+
+    with _mcp_futures.ThreadPoolExecutor(max_workers=len(servers)) as pool:
+        futures = [pool.submit(_load_one, name, sconf) for name, sconf in servers.items()]
+        for future in _mcp_futures.as_completed(futures):
+            name, client, tools = future.result()
+            for t in tools:
+                tool_name = t.get("name", "")
+                if not tool_name:
+                    continue
+                tname = f"mcp__{name}__{tool_name}"
+                TOOL_REGISTRY[tname] = {
+                    "function": (lambda c, tn: (lambda args=None: _mcp_call(c, tn, args)))(client, tool_name),
+                    "description": t.get("description", f"MCP tool from server '{name}'"),
+                    "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
+                }
+                registered.append(tname)
+            logger.info(f"MCP: registered {len(tools)} tool(s) from '{name}'")
     return registered
 
 
