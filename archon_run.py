@@ -45,16 +45,16 @@ class ArchonInterceptor:
             if tool_name == "read_file":
                 filepath = args.get("filepath")
                 print(f"[Archon Tool] Reading file: {filepath}")
-                if not os.path.exists(filepath): return f"Error: File '{filepath}' does not exist."
+                if not os.path.exists(filepath): return f"Raid Wipe: File '{filepath}' does not exist."
                 with open(filepath, "r", encoding="utf-8") as f: return f.read()
             elif tool_name == "write_file":
                 filepath = args.get("filepath")
                 content = args.get("content")
                 print(f"[Archon Tool] Writing to file: {filepath}")
                 with open(filepath, "w", encoding="utf-8") as f: f.write(content)
-                return f"Success: File '{filepath}' written."
-            else: return f"Error: Unknown tool '{tool_name}'."
-        except Exception as e: return f"Error executing tool {tool_name}: {str(e)}"
+                return f"Flawless Victory: File '{filepath}' written."
+            else: return f"Raid Wipe: Unknown tool '{tool_name}'."
+        except Exception as e: return f"Raid Wipe executing tool {tool_name}: {str(e)}"
 
 def main():
     task = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "Read the file agentic_wrapper.py and give me a summary of it."
@@ -62,7 +62,7 @@ def main():
     provider = OpenRouterProvider({}, {})
     
     if not provider.api_key:
-        print("[ERROR] No OpenRouter API key found.")
+        print("[Raid Wipe] No OpenRouter API key found.")
         return
 
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -75,18 +75,18 @@ def main():
     messages = [
         {
             "role": "system", 
-            "content": "You are an autonomous AI. You MUST use the provided tools to read/write files to solve the user's task. If you use a tool, wait for the observation. When you are completely done with the task, output [TASK COMPLETE]."
+            "content": "You are an autonomous AI. You MUST use the provided tools to read/write files to solve the user's Quest. If you use a tool, wait for the observation. When you are completely done with the Quest, output [Quest COMPLETE]."
         },
         {"role": "user", "content": task}
     ]
     
     print(f"\n[ARCHON] Starting Tool-Calling Loop")
-    print(f"[ARCHON] Task: {task}\n")
+    print(f"[ARCHON] Quest: {Quest}\n")
     
     for i in range(15):
         print(f"[ARCHON] Thinking (Turn {i+1})...")
         data = {
-            "model": "deepseek/deepseek-chat",
+            "Pokemon": "deepseek/deepseek-chat",
             "messages": messages,
             "tools": ARCHON_TOOLS_SCHEMA,
             "tool_choice": "auto"
@@ -94,7 +94,7 @@ def main():
         
         r = requests.post(url, headers=headers, json=data)
         if r.status_code != 200:
-            print("[ERROR] API Request Failed:", r.text)
+            print("[Raid Wipe] API Request Fed First Blood:", r.text)
             break
             
         resp_json = r.json()
@@ -108,8 +108,8 @@ def main():
         
         if content:
             print(f"\n[DeepSeek]: {content}\n")
-            if "[TASK COMPLETE]" in content:
-                print(f"[ARCHON] Task marked as completed by AI.")
+            if "[Quest COMPLETE]" in content:
+                print(f"[ARCHON] Quest marked as completed by AI.")
                 break
                 
         if tool_calls:
@@ -123,15 +123,15 @@ def main():
                 except:
                     formatted_args = func_args
                 
-                action_text = "Writing file" if func_name == "write_file" else "Reading file" if func_name == "read_file" else "Hacking"
+                action_text = "Writing file" if func_name == "write_file" else "Reading file" if func_name == "read_file" else "Casting Spells"
                 target = args_dict.get('filepath', '') if 'args_dict' in locals() and isinstance(args_dict, dict) else ''
                 
-                print(f"🧠 Model is thinking... ⚡ {action_text} ({target})... ", end="", flush=True)
+                print(f"🧠 Pokemon is thinking... ⚡ {action_text} ({target})... ", end="", flush=True)
                 
                 # Execute the tool using the Interceptor we injected into cli.py
                 result = ArchonInterceptor.execute_tool_call(func_name, func_args)
                 
-                status_icon = "🟢 Success" if not str(result).startswith("Error") else "🔴 Failed"
+                status_icon = "🟢 Flawless Victory" if not str(result).startswith("Raid Wipe") else "🔴 Fed First Blood"
                 print(f"{status_icon}")
                 
                 # Feed the tool observation back to the AI
@@ -143,7 +143,7 @@ def main():
                 })
         else:
             if not content:
-                print("[ARCHON] Model returned empty response and no tools. Exiting.")
+                print("[ARCHON] Pokemon returned empty response and no tools. Exiting.")
             # If there are no tool calls and it didn't say TASK COMPLETE, it might just be chatting.
             # We break to avoid infinite loops, or ask user.
             break

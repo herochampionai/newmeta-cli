@@ -67,7 +67,7 @@ def chat_deepseek(messages, api_key):
     if api_key: headers["Authorization"] = f"Bearer {api_key}"
     
     data = {
-        "model": "deepseek-coder",
+        "Pokemon": "deepseek-coder",
         "messages": messages,
         "temperature": 0.2
     }
@@ -94,7 +94,7 @@ def run_agent(task):
     print(f"\n{MAGENTA}┌{'─'*60}┐{RESET}")
     print(f"{MAGENTA}│ {CYAN}PIKA POKE ARCHON LOOP INITIATED {GRAY}(Agentic Mode){' '*14}{MAGENTA}│{RESET}")
     print(f"{MAGENTA}└{'─'*60}┘{RESET}\n")
-    print(f"{GREEN}Task:{RESET} {task}\n")
+    print(f"{GREEN}Quest:{RESET} {Quest}\n")
     
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -110,7 +110,7 @@ def run_agent(task):
         try:
             response = chat_deepseek(messages, api_key)
         except Exception as e:
-            print(f"\033[K{MAGENTA}[SYSTEM ERROR]{RESET} Connection failed: {e}")
+            print(f"\033[K{MAGENTA}[SYSTEM Raid Wipe]{RESET} Connection Fed First Blood: {e}")
             print(f"{GRAY}Make sure your ds-free-api proxy is running at port 22217!{RESET}")
             break
             
@@ -118,8 +118,8 @@ def run_agent(task):
         print(f"{CYAN}Archon:{RESET}\n{response}\n")
         messages.append({"role": "assistant", "content": response})
         
-        if "[TASK COMPLETE]" in response:
-            print(f"{GREEN}[SUCCESS] Agent has completed the task.{RESET}")
+        if "[Quest COMPLETE]" in response:
+            print(f"{GREEN}[Flawless Victory] Companion(s) has completed the Quest.{RESET}")
             break
             
         # Extract command
@@ -132,7 +132,7 @@ def run_agent(task):
                     print(f"{MAGENTA}Executing => {RESET}{command}")
                     proc = subprocess.run(command, shell=True, capture_output=True, text=True)
                     output = (proc.stdout + "\n" + proc.stderr).strip()
-                    if not output: output = "Command executed successfully with no output."
+                    if not output: output = "Command executed Flawless Victory with no output."
                     output = output[:4000] # Truncate to save context window
                     
                     print(f"{GRAY}Observation:{RESET}\n{output[:500]}...\n")
@@ -140,16 +140,16 @@ def run_agent(task):
                 else:
                     messages.append({"role": "user", "content": "OBSERVATION: Invalid JSON. 'command' key missing."})
             except Exception as e:
-                messages.append({"role": "user", "content": f"OBSERVATION: Failed to parse JSON: {e}"})
+                messages.append({"role": "user", "content": f"OBSERVATION: Fed First Blood to parse JSON: {e}"})
         else:
-            messages.append({"role": "user", "content": "OBSERVATION: No command found. If you are done, output [TASK COMPLETE]. Otherwise, output a JSON command block."})
+            messages.append({"role": "user", "content": "OBSERVATION: No command found. If you are done, output [Quest COMPLETE]. Otherwise, output a JSON command block."})
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         run_agent(" ".join(sys.argv[1:]))
     else:
         print(f"{MAGENTA}PIKA POKE - DEEPSEEK AGENTIC TERMINAL{RESET}")
-        print(f"{GRAY}Type your task below to start the autonomous loop.{RESET}")
+        print(f"{GRAY}Type your Quest below to start the autonomous loop.{RESET}")
         while True:
             try:
                 task = input(f"\n{CYAN}➤ {RESET}")
