@@ -177,7 +177,7 @@ def read_bottom_bar_prompt(provider_name: str, config: dict) -> str:
     reset = "\033[0m"
     buffer = ""
     last_right_click = 0.0
-    paste_hint = "[RClick smart paste] [Alt+V image paste]"
+    paste_hint = "[RClick smart paste] [Alt+Shift+V image paste]"
 
     new_mode = (original_mode.value | ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT) & ~ENABLE_QUICK_EDIT_MODE
 
@@ -1608,7 +1608,7 @@ class KimiCliProvider(Provider):
 PROVIDERS = {"openai": OpenAIProvider, "minimax": MiniMaxProvider, "mephissa": MephissaProvider, "mephisto": MephistoProvider,
              "ollama": OllamaProvider, "anthropic": AnthropicProvider, "gemini": GeminiProvider,
              "openrouter": OpenRouterProvider, "opencode": OpenCodeProvider, "deepseek": DeepSeekProvider,
-             "dsfree": DsFreeProvider,
+             "dsfree": DsFreeProvider, "mini-5-gpt": DsFreeProvider,
              "groq": GroqProvider, "mistral": MistralProvider, "qwen": QwenProvider,
              "lmstudio": LMStudioProvider, "kimi": KimiProvider, "kimifree": KimiFreeProvider,
              "kimi-cli": KimiCliProvider,
@@ -2287,6 +2287,159 @@ def mephissa_record_stop() -> str:
                 pass
     _REC_STATE["proc"] = None
     return f"⏹ Recording saved: {path}"
+
+
+# Real scripts, not descriptions: each Zouzou entry launches the actual
+# self-contained Python file the AHK layer already triggers (see
+# C:\Users\<user>\.claude\zouzou\pika_poke.ahk), so this panel and the
+# Alt+ hotkeys fire the exact same code, never a separate reimplementation.
+ZOUZOU_SCRIPTS_DIR = Path(os.path.expanduser("~/.claude/zouzou"))
+ZOUZOU_EFFECTS = [
+    {"key": "matrix_rain", "label": "Matrix Rain", "hotkey": "Alt+X", "icon": "🟢",
+     "desc": "Cascading green code rain, self-contained ANSI animation."},
+    {"key": "nyan_cat", "label": "Nyan Cat", "hotkey": "Alt+Y", "icon": "🌈",
+     "desc": "Nyan Cat flies across the terminal trailing a rainbow, ~6s."},
+    {"key": "hollywood_mode", "label": "Hollywood Mode", "hotkey": "Alt+U", "icon": "💻",
+     "desc": "Fake hacker-movie terminal chaos — scan lines, hex dumps, fake process names."},
+    {"key": "ascii_fireworks", "label": "ASCII Fireworks", "hotkey": "Alt+I", "icon": "🎆",
+     "desc": "Exploding particle-burst fireworks, self-contained, ~6s."},
+    {"key": "ascii_banner", "label": "ASCII Banner", "hotkey": "Alt+Z", "icon": "🔤",
+     "desc": "Giant block-letter banner from a 5x5 bitmap font, renders the clipboard text."},
+    {"key": "cowsay_fortune", "label": "Cowsay Fortune", "hotkey": "Alt+O", "icon": "🐄",
+     "desc": "An ASCII cow delivers a random one-liner."},
+    {"key": "rainbow_cow", "label": "Rainbow Cow", "hotkey": "Alt+A", "icon": "🐄",
+     "desc": "Cowsay Fortune, lolcat-rainbow-colored via 24-bit ANSI hue cycling."},
+    {"key": "starwars_ascii", "label": "Galaxy Trick", "hotkey": "Alt+G", "icon": "⭐",
+     "desc": "Streams Star Wars Episode IV as ASCII art (needs Windows Telnet Client enabled)."},
+    {"key": "system_dashboard", "label": "System Dashboard", "hotkey": "Alt+T", "icon": "📊",
+     "desc": "Real live CPU/RAM/disk/network cockpit (psutil, genuine OS counters)."},
+    {"key": "fatality_sequence", "label": "Fatality Sequence", "hotkey": "Ctrl+Alt+Z", "icon": "🔥",
+     "desc": "The full show chained: Matrix Rain, ASCII Star Wars preview, Fireworks, Nyan Cat finale."},
+    # External-tool show, not one of the self-contained scripts above --
+    # needs a one-time manual install (pip install terminaltexteffects,
+    # a MatrixRain winget package, a downloaded ruclouds.exe) before this
+    # will actually run. Listed honestly rather than silently working.
+    {"key": "ultimate_terminal_show", "label": "Ultimate Terminal Show", "hotkey": "", "icon": "🎬",
+     "desc": "5-act show (Matrix/Clouds/TTE text FX/Star Wars/Finale) via external tools -- needs a one-time manual install first, see ultimate_terminal_show.ps1's header.",
+     "external": True, "script_path": str(Path(__file__).parent / "ultimate_terminal_show.ps1")},
+]
+
+
+# --- Voice command: push-to-talk toggle + Whisper transcription + dispatch,
+# reusing the real mic recording above (no separate recording path). First
+# call starts it, second call stops, transcribes, and matches the words
+# against known commands -- transparent about what it heard either way,
+# never silently guessing.
+_VOICE_CMD_MAP = [
+    (("resume", "unpause"), lambda: meph_dj_pause()),
+    (("pause",), lambda: meph_dj_pause()),
+    (("stop",), lambda: meph_dj_stop()),
+    (("skip", "next track", "next song"), lambda: meph_dj_skip()),
+    (("transition", "mix now"), lambda: meph_dj_transition()),
+    (("fade in",), lambda: meph_dj_fade_in()),
+    (("fade out",), lambda: meph_dj_fade_out()),
+    (("volume up", "louder"), lambda: meph_dj_volume(5)),
+    (("volume down", "quieter"), lambda: meph_dj_volume(-5)),
+    (("play",), lambda: meph_dj_pause()),
+]
+
+
+def _voice_match_command(text: str) -> str:
+    t = text.lower().strip()
+    if not t:
+        return "🗣️ Heard nothing (empty transcription)."
+    for keywords, fn in _VOICE_CMD_MAP:
+        if any(k in t for k in keywords):
+            return f'🗣️ Heard: "{text}"\n-> {fn()}'
+    for effect in ZOUZOU_EFFECTS:
+        spoken = effect["label"].lower()
+        if spoken in t or effect["key"].replace("_", " ") in t:
+            if effect.get("external"):
+                script = Path(effect["script_path"])
+                launcher = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+            else:
+                script = ZOUZOU_SCRIPTS_DIR / f"{effect['key']}.py"
+                launcher = [sys.executable, str(script)]
+            if not script.is_file():
+                return f'🗣️ Heard: "{text}"\n-> [ERROR] Script not found: {script}'
+            subprocess.Popen(launcher, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            return f'🗣️ Heard: "{text}"\n-> 🎭 Cast: {effect["label"]}'
+    known = "play/pause/stop/skip/transition/fade in/fade out/volume up/volume down, or any Zouzou effect name"
+    return f'🗣️ Heard: "{text}"\n-> No matching command. Known: {known}'
+
+
+_MEPHISSA_STATE_PATH = Path(os.path.expanduser(r"~\.claude\mephissa\state.json"))
+_VOICE_STATE = {"pending": None}  # {"path": ..., "text": ..., "language": ...} while awaiting confirm
+
+
+def _write_mephissa_state(patch: dict) -> None:
+    """Merge into the same state.json statusline.py already reads (her real
+    XP/stage file) -- so the 🔴REC glyph there reflects this exact toggle,
+    not a separate/parallel status."""
+    try:
+        _MEPHISSA_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if _MEPHISSA_STATE_PATH.exists():
+            try:
+                data = json.loads(_MEPHISSA_STATE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data.update(patch)
+        _MEPHISSA_STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+@register_tool("meph_dj_voice_command", "Mephissa: toggle voice-command recording. First call starts recording from the mic; second call stops it and transcribes via Whisper -- if non-English, asks for translate confirmation instead of auto-dispatching; a third call (or after confirming) matches the English words against known DJ/effect commands and runs the match. Always reports what it actually heard.", {"type": "object", "properties": {}})
+def meph_dj_voice_command() -> str:
+    proc = _REC_STATE.get("proc")
+
+    if proc and proc.poll() is None:
+        # Press 2: stop + detect language. Non-English does NOT auto-dispatch
+        # -- it asks, and waits for a third press to actually confirm+run.
+        stop_msg = mephissa_record_stop()
+        _write_mephissa_state({"voice_recording": False})
+        path = _REC_STATE.get("path")
+        if not path or not os.path.isfile(path):
+            return f"{stop_msg}\n[ERROR] No recording file to transcribe."
+        try:
+            import whisper
+        except ImportError:
+            return f"{stop_msg}\n[ERROR] openai-whisper not installed. Run: pip install openai-whisper"
+        try:
+            model = whisper.load_model("base")
+            result = model.transcribe(path)
+            text = (result.get("text") or "").strip()
+            language = result.get("language") or "en"
+        except Exception as e:
+            return f"{stop_msg}\n[ERROR] Transcription failed: {e}"
+        if language != "en":
+            _VOICE_STATE["pending"] = {"path": path, "text": text, "language": language}
+            return (f"{stop_msg}\n🗣️ Heard ({language}): \"{text}\"\n"
+                     f"Translate to English and run it as a command? Press 🎤 VOICE again to confirm, "
+                     f"or just start a new recording to discard this one.")
+        return f"{stop_msg}\n{_voice_match_command(text)}"
+
+    pending = _VOICE_STATE.get("pending")
+    if pending:
+        # Press 3: confirmed. Re-run Whisper in translate mode on the SAME
+        # audio (translating speech directly is more accurate than
+        # machine-translating the already-transcribed text separately).
+        _VOICE_STATE["pending"] = None
+        try:
+            import whisper
+            model = whisper.load_model("base")
+            result = model.transcribe(pending["path"], task="translate")
+            english_text = (result.get("text") or "").strip()
+        except Exception as e:
+            return f"[ERROR] Translation failed: {e}"
+        return f'🌐 Translated ({pending["language"]}->en): "{english_text}"\n{_voice_match_command(english_text)}'
+
+    # Press 1 (or a fresh press with no pending confirm): start recording.
+    msg = mephissa_record_start()
+    if not msg.startswith("[ERROR]") and not msg.startswith("Already"):
+        _write_mephissa_state({"voice_recording": True})
+    return msg
 
 
 # --- Mephissa DJ mode: background audio/video playback -------------------
@@ -6193,6 +6346,18 @@ def _undo_status():
 # ---- Permissions (allow / ask / deny) -------------------------------------
 _PERMISSIONS_FILE = Path(__file__).resolve().parent / "permissions.json"
 _PERMISSIONS = {"allow": [], "ask": [], "deny": []}
+
+# Optional callable(tool_name, target) -> "allow"|"once"|"deny"|"always", set by a
+# host UI (e.g. newmeta_tui.py) that can't use blocking terminal input() because it
+# owns the terminal itself (Textual runs in raw mode - input() from another thread
+# has no reliable way to receive a line-terminated read). When unset, falls back to
+# the original print()+input() terminal prompt untouched.
+_PERMISSION_PROMPT_HANDLER = None
+
+def set_permission_prompt_handler(fn) -> None:
+    global _PERMISSION_PROMPT_HANDLER
+    _PERMISSION_PROMPT_HANDLER = fn
+
 _MUTATING_TOOLS = {"write_file": True, "run_python": True, "run_javascript": True, "execute_command": True,
                     "meph_download_audio": True, "meph_download_video": True}
 _PERMISSION_ALIASES = {
@@ -6258,16 +6423,23 @@ def _authorize_tool(tool_name, args) -> bool:
                   or args.get("command") or args.get("code") or "")
     except Exception:
         target = ""
-    print(f"\n[PERMISSION] {tool_name} requires approval")
-    print(f"  target: {str(target)[:120] if target else '(none)'}")
-    answer = input("[allow] | once | deny | always> ").strip().lower()
-    if answer in ("a", "allow", "o", "once"):
-        return True
+    target_display = str(target)[:120] if target else "(none)"
+    if _PERMISSION_PROMPT_HANDLER is not None:
+        answer = (_PERMISSION_PROMPT_HANDLER(tool_name, target_display) or "").strip().lower()
+    else:
+        print(f"\n[PERMISSION] {tool_name} requires approval")
+        print(f"  target: {target_display}")
+        answer = input("[allow] | once | deny | always> ").strip().lower()
     if answer in ("always", "ap"):
         t = _PERMISSION_ALIASES.get(tool_name, tool_name)
-        if t not in _PERMISSIONS["ask"]:
-            _PERMISSIONS["ask"].append(t)
+        for key in ("ask", "deny"):
+            if t in _PERMISSIONS[key]:
+                _PERMISSIONS[key].remove(t)
+        if t not in _PERMISSIONS["allow"]:
+            _PERMISSIONS["allow"].append(t)
         _save_permissions()
+        return True
+    if answer in ("a", "allow", "o", "once"):
         return True
     return False
 
@@ -7649,6 +7821,7 @@ def main():
     parser.add_argument("-m", "--model")
     parser.add_argument("-s", "--system")
     parser.add_argument("-f", "--file")
+    parser.add_argument("--raw", action="store_true", help="Output raw text only without provider prefix")
     parser.add_argument("--chat", action="store_true")
     parser.add_argument("--session")
     parser.add_argument("--resume", metavar="ID", help="Resume a saved session (accepts full id, id prefix, or name)")
@@ -7955,10 +8128,12 @@ Type: newmeta --chat to start
         provider = get_provider(provider_name, config, secrets)
         messages = [{"role": "system", "content": args.system or "You are NewMeta, a helpful AI assistant."}, {"role": "user", "content": prompt}]
         
-        print(f"[{provider_name}] ", end="")
+        if not args.raw:
+            print(f"[{provider_name}] ", end="")
         for chunk in provider.chat(messages, stream=True, temperature=0.7):
             print(chunk, end="", flush=True)
-        print()
+        if not args.raw:
+            print()
         
         if history: history.add(prompt, provider.__class__.__name__, prompt[:200], mode="single")
         

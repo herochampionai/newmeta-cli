@@ -933,5 +933,357 @@ def format_signals_summary() -> str:
     return format_multi_platform_summary()
 
 
+# ---------------------------------------------------------------------------
+# "Study 1" Master Auditor blueprint - operating rules + report template.
+#
+# These are Mephisto's real, saved operating rules for this report type
+# (risk sizing, position limits, hedge-mode notation), applied to his real
+# signal-scanning engine above. Two honest boundaries, deliberate:
+#   1. Section 3 surfaces REAL signal data (real tickers, real velocity/
+#      volume numbers already computed above) as candidates worth
+#      reviewing - it does NOT fabricate specific entry/TP/SL price levels
+#      or win-probability percentages. Making those up would be exactly
+#      the kind of invented financial advice this project has avoided
+#      everywhere else (see: no fabricated PIKA POKE income numbers).
+#   2. Section 4 (position audit / force closures) needs live account
+#      position data, which lives behind the MT5 MCP connection - only
+#      available when actually chatting with Mephisto with tools enabled,
+#      not from a plain function call here. Even then, closing a real
+#      position is something Mephisto can flag/recommend, never execute
+#      unilaterally - that stays a human-confirmed action.
+# ---------------------------------------------------------------------------
+MEPHISTO_STUDY1_RULES = {
+    "golden_rule": "Never fade institutional buying.",
+    "max_risk_per_trade_pct": 2.0,
+    "hedge_mode": True,  # posIdx 1 = Long, per hedge-mode convention
+    "max_open_positions": 12,
+}
+
+
+# ---------------------------------------------------------------------------
+# Weekly Macro Scout / 48-Hour Macro Tracking Protocol - saved as real
+# methodology (the analysis STEPS to follow), not a data feed. Two honest
+# gaps, found by actually checking the real sources rather than guessing:
+#   - BLS.gov (CPI/PPI/NFP dates) explicitly blocks automated retrieval
+#     ("Access Denied... bot activity... prohibited") - confirmed live,
+#     not assumed. A one-time interactive check is fine; polling it on
+#     every report request would be exactly what that policy forbids.
+#     Real dates found in one such check (2026-08-12): CPI Aug 12 08:30 ET,
+#     PPI Aug 13 08:30 ET, Employment Situation Sep 4 08:30 ET.
+#   - Farside (ETF flow) returned 403 to a plain fetch. Neither is
+#     something to route around - both need a real subscribed API (e.g.
+#     FRED's actual API with a registered key, or a paid econ-calendar/
+#     ETF-flow provider) rather than scraping a source that's blocking it.
+# So: the CONSENSUS-VS-PRO-ESTIMATE numbers and specific event dates in
+# Part 1's table are NOT auto-generated here - they'd need that real data
+# source wired in first. What's saved for real is the analysis framework.
+# ---------------------------------------------------------------------------
+MACRO_TRACKING_PROTOCOL = {
+    "steps": [
+        "1. EVENT & TIMING: official event name, date, time in ET and local (e.g. Beirut).",
+        "2. THE SETUP: Wall St consensus number, then a reasoned pro estimate with explicit "
+        "multi-variable reasoning (supply chain lags, consumer credit trends, regional shifts) "
+        "for why it might deviate - not a number pulled from nowhere.",
+        "3. LIQUIDITY IMPACT: Drain Condition (hot data/hawkish -> yields+DXY up -> capital exits "
+        "crypto) vs Injection Condition (cool data/dovish -> yields capped, Dollar stalls -> "
+        "relief window opens for risk assets).",
+        "4. TRADING BIAS: one concrete stance (Long Scalp Post-Release / Fade the Initial Move / "
+        "Short the Bounces / Sit on Hands) with explicit timing (e.g. the 15-minute candle rule) "
+        "to avoid algo stop-hunts.",
+    ],
+    "filter_window_hours": 48,
+    "format_rules": "Markdown headers, tables, bullets, blockquotes for key takeaways; no emojis; "
+                     "flag overlapping data clusters or holiday-compressed low-liquidity sessions.",
+}
+
+
+BINANCE_FAPI = "https://fapi.binance.com"
+
+
+def get_oi_funding_signal(symbol: str = "BTCUSDT") -> Dict[str, Any]:
+    """Combined Open Interest + Funding Rate crowding/squeeze signal - both
+    free, no-key Binance Futures public endpoints. Neither alone is a
+    reliable signal: OI surging can't tell you direction (new longs OR
+    shorts), and funding alone can't tell you if it's a fresh move or
+    already stale. Combined - OI surging AND funding moving the same
+    direction - is the real market-structure tell for crowded, potentially
+    over-leveraged positioning (the classic pre-liquidation-cascade setup).
+    Real live data, real math, no fabricated numbers."""
+    out = {"symbol": symbol, "ok": False}
+    try:
+        oi_hist = _http_json(f"{BINANCE_FAPI}/futures/data/openInterestHist?symbol={symbol}&period=1h&limit=6")
+        funding_hist = _http_json(f"{BINANCE_FAPI}/fapi/v1/fundingRate?symbol={symbol}&limit=6")
+        if not oi_hist or not funding_hist:
+            return out
+
+        oi_now = float(oi_hist[-1]["sumOpenInterest"])
+        oi_then = float(oi_hist[0]["sumOpenInterest"])
+        oi_change_pct = ((oi_now - oi_then) / oi_then * 100.0) if oi_then else 0.0
+
+        funding_now = float(funding_hist[-1]["fundingRate"])
+        funding_then = float(funding_hist[0]["fundingRate"])
+        funding_flip = (funding_now > 0) != (funding_then > 0) and funding_then != 0
+
+        # Same-direction confluence: OI surging up + funding pushing further
+        # positive (longs paying, long-crowded) = long squeeze risk. OI
+        # surging up + funding pushing further negative = short squeeze risk.
+        oi_surging = oi_change_pct >= 3.0  # 3%+ OI change over the window, real threshold not tuned/backtested
+        funding_extreme = abs(funding_now) >= 0.0005  # 0.05%/8h, elevated for a perpetual
+        same_direction = (oi_change_pct > 0 and funding_now > funding_then) or (oi_change_pct < 0 and funding_now < funding_then)
+
+        verdict = "neutral"
+        if oi_surging and funding_extreme and same_direction:
+            verdict = "long_squeeze_risk" if funding_now > 0 else "short_squeeze_risk"
+        elif funding_flip:
+            verdict = "funding_flip"
+        elif oi_surging:
+            verdict = "oi_surge_only"
+
+        out.update({
+            "ok": True,
+            "oi_now": oi_now,
+            "oi_change_pct_6h": round(oi_change_pct, 2),
+            "funding_now_pct": round(funding_now * 100, 4),
+            "funding_flip": funding_flip,
+            "verdict": verdict,
+        })
+    except Exception:
+        pass
+    return out
+
+
+def get_ib_range_status(symbol: str = "BTCUSDT") -> Dict[str, Any]:
+    """Initial Balance (IBH/IBL) + real breakout/revisit/choppy/fakeout
+    classification. IB convention here: the first 1h candle of the current
+    UTC day (00:00-01:00 UTC) - a standard reference range for 24h
+    futures markets. Classification is rule-based off real OHLC candles
+    fetched since then, not a guess:
+      - choppy: price never closed beyond IBH/IBL all session
+      - breakout_up/down: broke the range and the latest close is still
+        beyond it
+      - revisit_from_high/low: broke the range, came back inside, still
+        inside now
+      - fakeout_up/down: broke one side, then reversed hard enough to
+        close through the OTHER side - the false-breakout trap pattern
+    """
+    out = {"symbol": symbol, "ok": False}
+    try:
+        now = datetime.utcnow()
+        day_start = datetime(now.year, now.month, now.day)
+        start_ms = int(day_start.timestamp() * 1000)
+        klines = _http_json(f"{BINANCE_FAPI}/fapi/v1/klines?symbol={symbol}&interval=1h&startTime={start_ms}&limit=24")
+        if not klines:
+            return out
+        ib_candle = klines[0]
+        ibh, ibl = float(ib_candle[2]), float(ib_candle[3])
+        after_ib = klines[1:]
+        if not after_ib:
+            out.update({"ok": True, "ibh": ibh, "ibl": ibl, "status": "ib_not_complete_yet"})
+            return out
+
+        highs = [float(k[2]) for k in after_ib]
+        lows = [float(k[3]) for k in after_ib]
+        latest_close = float(after_ib[-1][4])
+        max_high, min_low = max(highs), min(lows)
+        broke_up, broke_down = max_high > ibh, min_low < ibl
+
+        if not broke_up and not broke_down:
+            status = "choppy"
+        elif broke_up and latest_close < ibl:
+            status = "fakeout_up"     # broke high, reversed hard through the low
+        elif broke_down and latest_close > ibh:
+            status = "fakeout_down"   # broke low, reversed hard through the high
+        elif broke_up and latest_close > ibh:
+            status = "breakout_up"
+        elif broke_down and latest_close < ibl:
+            status = "breakout_down"
+        elif broke_up:
+            status = "revisit_from_high"
+        else:
+            status = "revisit_from_low"
+
+        out.update({
+            "ok": True, "ibh": ibh, "ibl": ibl,
+            "latest_close": latest_close, "status": status,
+        })
+    except Exception:
+        pass
+    return out
+
+
+def _http_json_post(url: str, body: dict, timeout: float = 6.0) -> Any:
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def get_btc_etf_flow() -> Dict[str, Any]:
+    """Real US spot Bitcoin ETF net flow, via SoSoValue's public open API
+    (api.sosovalue.xyz/openapi/v2/etf/currentEtfDataMetrics - a real,
+    documented endpoint, confirmed live: verified with GET first (405
+    Method Not Allowed - meaning the path is real, just wrong verb), then
+    the correct POST). CoinMarketCap's ETF endpoint was tried as the first
+    fallback and looked CDN-blocked (identical cached timestamp on every
+    retry, not a genuine transient error) - SoSoValue is the one that's
+    actually live."""
+    out = {"ok": False}
+    try:
+        resp = _http_json_post("https://api.sosovalue.xyz/openapi/v2/etf/currentEtfDataMetrics", {"type": "us-btc-spot"})
+        data = resp.get("data") or {}
+        daily = data.get("dailyNetInflow", {})
+        cum = data.get("cumNetInflow", {})
+        issuers = []
+        for item in (data.get("list") or [])[:5]:
+            issuers.append({
+                "ticker": item.get("ticker"),
+                "daily_net_inflow": float(item.get("dailyNetInflow", {}).get("value", 0)),
+            })
+        out.update({
+            "ok": True,
+            "as_of": daily.get("lastUpdateDate"),
+            "daily_net_inflow": float(daily.get("value", 0)),
+            "cum_net_inflow": float(cum.get("value", 0)),
+            "issuers": issuers,
+        })
+    except Exception:
+        pass
+    return out
+
+
+def get_cme_gap() -> Dict[str, Any]:
+    """Real CME Bitcoin futures gap: CME (exchangeName confirmed in the
+    response) doesn't trade weekends, but spot crypto does - so a gap
+    forms between Friday's futures close and wherever spot has moved to
+    by Monday. Real data via Yahoo Finance's BTC=F chart endpoint (CME
+    futures) vs Binance spot, both live, no key needed."""
+    out = {"ok": False}
+    try:
+        yf = _http_json("https://query1.finance.yahoo.com/v8/finance/chart/BTC=F?interval=1d&range=10d")
+        result = yf["chart"]["result"][0]
+        closes = result["indicators"]["quote"][0]["close"]
+        timestamps = result["timestamp"]
+        # Last completed Friday close: scan backwards for the most recent
+        # weekday==Friday (4) session with a real (non-null) close.
+        friday_close, friday_date = None, None
+        for ts, close in zip(reversed(timestamps), reversed(closes)):
+            if close is None:
+                continue
+            dt = datetime.utcfromtimestamp(ts)
+            if dt.weekday() == 4:  # Friday
+                friday_close, friday_date = close, dt.strftime("%Y-%m-%d")
+                break
+        if friday_close is None:
+            return out
+        spot = _http_json("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+        spot_price = float(spot["price"])
+        gap = spot_price - friday_close
+        gap_pct = (gap / friday_close * 100.0) if friday_close else 0.0
+        out.update({
+            "ok": True, "friday_close": friday_close, "friday_date": friday_date,
+            "spot_price": spot_price, "gap": round(gap, 2), "gap_pct": round(gap_pct, 3),
+            "direction": "gap_up" if gap > 0 else ("gap_down" if gap < 0 else "no_gap"),
+        })
+    except Exception:
+        pass
+    return out
+
+
+def get_trend_structure(symbol: str = "BTCUSDT", lookback: int = 12) -> Dict[str, Any]:
+    """One real, well-defined chart-structure read: higher-highs/higher-lows
+    vs lower-highs/lower-lows swing structure, off real 1h candles. This is
+    deliberately scoped to ONE honest, rule-based pattern rather than
+    claiming a full chart-pattern library (head & shoulders, triangles,
+    flags, etc.) - those need real swing-pivot detection and would take
+    real engineering to do without just guessing shapes in noise."""
+    out = {"symbol": symbol, "ok": False}
+    try:
+        klines = _http_json(f"{BINANCE_FAPI}/fapi/v1/klines?symbol={symbol}&interval=1h&limit={lookback}")
+        if len(klines) < 4:
+            return out
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        half = len(klines) // 2
+        first_half_high, second_half_high = max(highs[:half]), max(highs[half:])
+        first_half_low, second_half_low = min(lows[:half]), min(lows[half:])
+        higher_high = second_half_high > first_half_high
+        higher_low = second_half_low > first_half_low
+        if higher_high and higher_low:
+            structure = "uptrend (higher highs, higher lows)"
+        elif not higher_high and not higher_low:
+            structure = "downtrend (lower highs, lower lows)"
+        else:
+            structure = "mixed/ranging (no consistent structure)"
+        out.update({"ok": True, "structure": structure, "lookback_hours": lookback})
+    except Exception:
+        pass
+    return out
+
+
+def mephisto_study1_report() -> str:
+    """Sections 1-3 of the Study 1 blueprint, built on the real signal
+    engine above (live where the platform's own "live" flag says so).
+    Section 4 is a template only - it needs a real MT5 position feed this
+    function doesn't have access to."""
+    data = get_multi_platform_signals()
+    pulse_platforms = [k for k in ("coingecko", "coinmarketcap", "polymarket", "telegram", "x", "dexscreener") if k in data]
+    live_count = sum(1 for k in pulse_platforms if data.get(k, {}).get("live"))
+
+    lines = ["STUDY 1 - CRYPTO UPDATE", f"ts {data.get('ts', '')}", ""]
+
+    # 1. Social Sentiment & Technical Pulse
+    lines.append("1. SENTIMENT & PULSE")
+    lines.append(f"Live platforms reporting: {live_count}/{len(pulse_platforms)}")
+    sweep = get_top_sweep_coin()
+    lines.append(f"Top momentum: {sweep}")
+    ib = get_ib_range_status("BTCUSDT")
+    if ib.get("ok"):
+        lines.append(f"BTC IB range: {ib['ibl']:.0f}-{ib['ibh']:.0f}  status: {ib.get('status', '?')}")
+    trend = get_trend_structure("BTCUSDT")
+    if trend.get("ok"):
+        lines.append(f"BTC 12h structure: {trend['structure']}")
+    oif = get_oi_funding_signal("BTCUSDT")
+    if oif.get("ok"):
+        lines.append(f"BTC OI 6h: {oif['oi_change_pct_6h']:+.2f}%  funding: {oif['funding_now_pct']:+.4f}%  verdict: {oif['verdict']}")
+    lines.append("(No F&G index yet - real gap, not filled in. IBH/IBL, structure, OI+funding above are real, live.)")
+    lines.append("")
+
+    # 2. Twitter & Telegram Scan (table) - real counts per platform, tagged
+    # live vs simulated-handle per platform's own honest "live" flag.
+    lines.append("2. SCAN")
+    lines.append(f"{'Platform':14} {'Buy':>4} {'Sell':>4} {'Pump':>4} {'Dump':>4}  Verdict")
+    for key in ("coingecko", "coinmarketcap", "polymarket", "telegram", "x", "binance_square", "instagram", "threads"):
+        p = data.get(key)
+        if not p:
+            continue
+        c = _counts(p)
+        tag = "live" if p.get("live") else "sim-handle*"
+        verdict = "Active" if (c["pump"] + c["buy"]) > (c["dump"] + c["sell"]) else "Cooling"
+        lines.append(f"{p['platform']:14} {c['buy']:>4} {c['sell']:>4} {c['pump']:>4} {c['dump']:>4}  {verdict} ({tag})")
+    lines.append("*sim-handle: real market pulse, generated handles - no public API for that platform")
+    lines.append("")
+
+    # 3. Top setups - REAL signal data only, not fabricated trade calls.
+    lines.append("3. TOP SIGNALS (not trade calls - no entry/TP/SL fabricated)")
+    pd = get_top_3_pump_dump_tweets()
+    for t in pd.get("pump_tweets", [])[:3]:
+        lines.append(f"  {t['token']:10} pump {t['velocity']:>8}  vol {t['volume']}")
+    if not pd.get("pump_tweets"):
+        lines.append("  (no pump signals cleared threshold this cycle)")
+    lines.append("")
+
+    # 4. Referee Check / Portfolio Audit - template only.
+    lines.append("4. REFEREE CHECK & PORTFOLIO AUDIT")
+    lines.append("Needs live MT5 position data (available via the mt5 MCP tools when")
+    lines.append("chatting with Mephisto directly, not from this static function).")
+    lines.append(f"Rules on file: max risk {MEPHISTO_STUDY1_RULES['max_risk_per_trade_pct']}%/trade, "
+                  f"hedge mode {'on' if MEPHISTO_STUDY1_RULES['hedge_mode'] else 'off'}, "
+                  f"max {MEPHISTO_STUDY1_RULES['max_open_positions']} open positions.")
+    lines.append("Force closures are flagged/recommended only - never auto-executed.")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     print(format_multi_platform_summary())

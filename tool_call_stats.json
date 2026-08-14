@@ -1,0 +1,7 @@
+{
+  "ollama": {
+    "native": 10,
+    "react": 5,
+    "react_fail": 0
+  }
+}

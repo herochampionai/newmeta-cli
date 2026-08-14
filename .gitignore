@@ -8,3 +8,5 @@ workspace/
 .secrets.enc
 venv/
 *.bak
+
+config.yaml

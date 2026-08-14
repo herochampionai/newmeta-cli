@@ -167,7 +167,7 @@ DEFAULT_TIMELINE_TASKS = [
 ]
 
 NME_TIPS = [
-    "Alt+V pastes clipboard text or image",
+    "Alt+Shift+V pastes clipboard text or image",
     "Right-click the prompt box to paste",
     "Double-click text to select a whole word",
     "Ctrl+U clears the prompt line",
@@ -1039,7 +1039,7 @@ class ChatInput(Input):
             event.prevent_default()
 
     def on_key(self, event: Key) -> None:
-        if event.key == "alt+v":
+        if event.key == "alt+shift+v":
             self.app.action_paste_clipboard()
             event.stop()
             event.prevent_default()
@@ -1649,7 +1649,7 @@ class ExplorerCLI(App):
         Binding("ctrl+f", "go_forward", "Forward", show=False),
         Binding("ctrl+o", "open_file", "Open", show=False),
         Binding("ctrl+c", "copy_log", "Copy", show=False),
-        Binding("alt+v", "paste_clipboard", "Paste Clipboard", show=False),
+        Binding("alt+shift+v", "paste_clipboard", "Paste Clipboard", show=False),
         Binding("escape", "handle_esc", "ESC Nudge/Abort", show=True),
         Binding("ctrl+q", "quit", "Quit", show=False),
     ]
@@ -1781,7 +1781,7 @@ class ExplorerCLI(App):
                     classes="pika-bar",
                     id="pika-bar"
                 )
-                yield Static("💡 Tip: Alt+V or right-click input attaches clipboard. Left-drag selects; right-click chat copies log.", classes="pika-sep")
+                yield Static("💡 Tip: Alt+Shift+V or right-click input attaches clipboard. Left-drag selects; right-click chat copies log.", classes="pika-sep")
                 yield Static("⚡ Commands: /help · /clear · /files · /model · /gpu · /pika · /archon · /tools · /mcp · /skills · /reload", classes="pika-sep")
                 yield ChatInput(
                     placeholder="> ",

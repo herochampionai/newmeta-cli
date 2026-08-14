@@ -1,0 +1,64 @@
+# ⚡ CLINE SWARM PROTOCOL (via NewMeta CLI)
+
+## The Multi-Agent Swarm
+You (Cline) are the **Architect Agent**. You have root access to a headless multi-agent swarm via the `NewMeta/cli.py` bridge. 
+
+Whenever you encounter a task that requires extensive reasoning, code review, log analysis, or repetitive boilerplate generation, you MUST NOT consume your own expensive API tokens to do it. Instead, you will offload these sub-tasks to our free-tier worker agents (Kimi or GLM-4-Flash) using your terminal execution tool.
+
+## The CLI Bridge Execution
+You can summon a worker agent by executing the following terminal command using your `run_command` tool. 
+
+**Format:**
+```bash
+python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "[YOUR_PROMPT]" -p [PROVIDER] -m [MODEL]
+```
+
+### Worker Agent Profiles
+
+#### 1. GLM-4-Flash (The Fast Coder)
+- **Use case:** Writing boilerplate, generating unit tests, quick python scripts, JSON parsing.
+- **Provider/Model flags:** `-p zhipu -m glm-4-flash`
+- **Example command:**
+  ```bash
+  python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Write a python regex to parse email addresses from this text: [insert text]" --raw -p zhipu -m glm-4-flash
+  ```
+
+#### 2. Kimi (The Deep Analyzer)
+- **Use case:** Reading long error logs, analyzing complex stack traces, deep logic reasoning.
+- **Provider/Model flags:** `-p moonshot -m moonshot-v1-8k` (or `moonshot-v1-32k`)
+- **Example command:**
+  ```bash
+  python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Analyze this error stack trace and tell me exactly which file caused the panic: [insert log]" --raw -p moonshot -m moonshot-v1-8k
+  ```
+
+#### 3. DeepSeek (The Architecture Master - Completely Free Options)
+- **Use case:** Advanced refactoring, logic generation, and complex math/algorithms.
+- **Option A (Local & 100% Free via Ollama):** Runs entirely on your local hardware. No API limits.
+  - **Flags:** `-p ollama -m deepseek-r1`
+  - **Example command:**
+    ```bash
+    python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Write a robust python sorting algorithm" --raw -p ollama -m deepseek-r1
+    ```
+- **Option B (Cloud & Free via OpenRouter):** Uses OpenRouter's free community endpoints for DeepSeek.
+  - **Flags:** `-p openrouter -m deepseek/deepseek-r1:free`
+  - **Example command:**
+    ```bash
+    python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Optimize this logic" --raw -p openrouter -m deepseek/deepseek-r1:free
+    ```
+
+#### 4. mini-5-gpt (The Architect - Thinking Mode)
+- **Use case:** Heavy reasoning, system design, architectural planning, and resolving complex logical deadlocks. 
+- **Provider/Model flags:** `-p mini-5-gpt`
+- **Example command:**
+  ```bash
+  python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Act as the Lead Architect. Analyze these requirements and output a step-by-step master plan." --raw -p mini-5-gpt
+  ```
+
+## Rules of Engagement
+1. **Always use quotes** around your `[YOUR_PROMPT]` string in the terminal command.
+2. If passing a file to the worker, use the `-f` flag:
+   ```bash
+   python "C:/Users/youha/Desktop/Codes/pika poke/NewMeta/cli.py" "Review this code for security vulnerabilities" -f "./src/main.py" -p moonshot -m moonshot-v1-8k
+   ```
+3. Wait for the terminal command to finish. The worker agent's response will be printed to `stdout`. Read the stdout and incorporate their analysis/code into your overall master plan.
+4. Do NOT attempt to run `cli.py` without a prompt argument, or it will drop into the interactive UI and freeze your background task! Always provide the prompt directly in the command.
