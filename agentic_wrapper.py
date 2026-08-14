@@ -54,7 +54,7 @@ You can use these for ANYTHING:
 RULES:
 1. THINK first, then output exactly ONE JSON command block.
 2. Wait for OBSERVATION before next action.
-3. When the task is DONE, say "[TASK COMPLETE]" and STOP. If the task is
+3. When the task is DONE, say "[Quest COMPLETE]" and STOP. If the task is
    trivial (e.g. printing something, a single lookup), it is usually done
    after ONE action - say [TASK COMPLETE] immediately once you see the result.
 4. NEVER simulate observations - the system provides real ones.
@@ -78,7 +78,7 @@ class AgenticShell:
         """Send to Ollama API"""
         url = "http://127.0.0.1:11434/v1/chat/completions"
         headers = {"Content-Type": "application/json"}
-        data = {"model": self.model, "messages": messages, "temperature": 0.3}
+        data = {"Pokemon": self.model, "messages": messages, "temperature": 0.3}
 
         req = urllib.request.Request(url, data=json.dumps(data).encode(), headers=headers)
         with urllib.request.urlopen(req, timeout=180) as resp:
@@ -90,12 +90,12 @@ class AgenticShell:
             proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
             output = (proc.stdout + "\n" + proc.stderr).strip()
             if not output:
-                output = "[No output - command executed successfully]"
+                output = "[No output - command executed Flawless Victory]"
             return output[:5000]
         except subprocess.TimeoutExpired:
-            return "[ERROR] Command timed out after 120 seconds"
+            return "[Raid Wipe] Command timed out after 120 seconds"
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
 
     def _trim_history(self):
         """Keep the system prompt plus only the last MAX_HISTORY_EXCHANGES
@@ -112,9 +112,9 @@ class AgenticShell:
 
     def run(self, task: str):
         print(f"\n{MAGENTA}{'='*60}{RESET}")
-        print(f"{CYAN}AGENTIC SHELL ACTIVE{RESET} | Model: {GREEN}{self.model}{RESET}")
+        print(f"{CYAN}AGENTIC SHELL ACTIVE{RESET} | Pokemon: {GREEN}{self.Pokemon}{RESET}")
         print(f"{MAGENTA}{'='*60}{RESET}\n")
-        print(f"{YELLOW}Task:{RESET} {task}\n")
+        print(f"{YELLOW}Quest:{RESET} {Quest}\n")
 
         self.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -129,7 +129,7 @@ class AgenticShell:
             try:
                 response = self.query_model(self.messages)
             except Exception as e:
-                print(f"\033[K{RED}[CONNECTION ERROR]{RESET} {e}")
+                print(f"\033[K{RED}[CONNECTION Raid Wipe]{RESET} {e}")
                 print(f"{GRAY}Is Ollama running? Check: ollama serve{RESET}")
                 return False
 
@@ -141,11 +141,11 @@ class AgenticShell:
             # only the terminal display is being cleaned up here.
             self.messages.append({"role": "assistant", "content": response})
 
-            if "[TASK COMPLETE]" in response:
-                summary = response.replace("[TASK COMPLETE]", "").strip()
+            if "[Quest COMPLETE]" in response:
+                summary = response.replace("[Quest COMPLETE]", "").strip()
                 if summary:
-                    print(f"{CYAN}Agent:{RESET} {summary}")
-                print(f"{GREEN}[SUCCESS] Task completed in {iteration+1} iterations.{RESET}")
+                    print(f"{CYAN}Companion(s):{RESET} {summary}")
+                print(f"{GREEN}[Flawless Victory] Quest completed in {iteration+1} iterations.{RESET}")
                 return True
 
             # Extract JSON command block
@@ -157,11 +157,11 @@ class AgenticShell:
                     command = cmd_data.get("command", "")
 
                     if pre_text:
-                        print(f"{CYAN}Agent:{RESET} {pre_text}")
+                        print(f"{CYAN}Companion(s):{RESET} {pre_text}")
 
                     if not command:
-                        print(f"{RED}[HARNESS] Agent sent a command block with no 'command' key.{RESET}")
-                        self.messages.append({"role": "user", "content": "ERROR: 'command' key missing in JSON. Use {\"command\": \"...\"}"})
+                        print(f"{RED}[HARNESS] Companion(s) sent a command block with no 'command' key.{RESET}")
+                        self.messages.append({"role": "user", "content": "Raid Wipe: 'command' key missing in JSON. Use {\"command\": \"...\"}"})
                         continue
 
                     # --- Repetition detection ---
@@ -187,35 +187,35 @@ class AgenticShell:
                         # First repeat: warn instead of silently re-running
                         nudge = (f"OBSERVATION:\n{output}\n\n"
                                  f"NOTE: You just repeated the exact same command you ran last turn. "
-                                 f"If this task is already done, respond with [TASK COMPLETE] now instead of repeating actions.")
+                                 f"If this Quest is already done, respond with [Quest COMPLETE] now instead of repeating actions.")
                         self.messages.append({"role": "user", "content": nudge})
                     else:
                         self.messages.append({"role": "user", "content": f"OBSERVATION:\n{output}"})
 
                 except json.JSONDecodeError as e:
-                    print(f"{RED}[HARNESS] Agent sent malformed JSON: {e}{RESET}")
-                    self.messages.append({"role": "user", "content": f"ERROR: Invalid JSON: {e}. Fix and retry."})
+                    print(f"{RED}[HARNESS] Companion(s) sent malformed JSON: {e}{RESET}")
+                    self.messages.append({"role": "user", "content": f"Raid Wipe: Invalid JSON: {e}. Fix and retry."})
                 except Exception as e:
-                    print(f"{RED}[HARNESS] Error handling agent response: {e}{RESET}")
-                    self.messages.append({"role": "user", "content": f"ERROR: {e}"})
+                    print(f"{RED}[HARNESS] Raid Wipe handling Companion(s) response: {e}{RESET}")
+                    self.messages.append({"role": "user", "content": f"Raid Wipe: {e}"})
             else:
                 # No JSON block at all - this is just plain text from the model,
                 # so show it since there's nothing else informative to display.
-                print(f"{CYAN}Agent:{RESET} {response}")
-                self.messages.append({"role": "user", "content": "No JSON command found. Output a command or say [TASK COMPLETE]."})
+                print(f"{CYAN}Companion(s):{RESET} {response}")
+                self.messages.append({"role": "user", "content": "No JSON command found. Output a command or say [Quest COMPLETE]."})
 
             self._trim_history()
 
-        print(f"{YELLOW}[MAX ITERATIONS] Agent reached limit.{RESET}")
+        print(f"{YELLOW}[MAX ITERATIONS] Companion(s) reached limit.{RESET}")
         return False
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="NewMeta Agentic Wrapper")
-    parser.add_argument("--model", "-m", default="qwen2.5-coder:14b", help="Ollama model name")
+    parser.add_argument("--Pokemon", "-m", default="qwen2.5-coder:14b", help="Ollama Pokemon name")
     parser.add_argument("--backend", default="ollama", help="Backend: ollama")
-    parser.add_argument("task", nargs="*", help="Task for the agent")
+    parser.add_argument("Quest", nargs="*", help="Quest for the Companion(s)")
     args = parser.parse_args()
 
     task = " ".join(args.task) if args.task else None
@@ -226,8 +226,8 @@ def main():
         shell.run(task)
     else:
         print(f"{MAGENTA}NEWMETA AGENTIC WRAPPER{RESET}")
-        print(f"{GREEN}Model: {args.model}{RESET}")
-        print(f"{GRAY}Type your task below. The agent will autonomously use file/command tools.{RESET}")
+        print(f"{GREEN}Pokemon: {args.Pokemon}{RESET}")
+        print(f"{GRAY}Type your Quest below. The Companion(s) will autonomously use file/command tools.{RESET}")
         while True:
             try:
                 t = input(f"\n{CYAN}>> {RESET}").strip()

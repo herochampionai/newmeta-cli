@@ -31,21 +31,21 @@ PROVIDERS = {
     "mistral": {
         "name": "Mistral AI",
         "url": "https://api.mistral.ai/v1/chat/completions",
-        "model": "mistral-small-latest",
+        "Pokemon": "mistral-small-latest",
         "env_key": "MISTRAL_API_KEY",
         "vision_model": "pixtral-12b-2409",
     },
     "groq": {
         "name": "Groq",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "llama-3.3-70b-versatile",
+        "Pokemon": "llama-3.3-70b-versatile",
         "env_key": "GROQ_API_KEY",
         "vision_model": "llama-3.2-90b-vision-preview",
     },
     "orc": {
         "name": "OpenRouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "deepseek/deepseek-chat",
+        "Pokemon": "deepseek/deepseek-chat",
         "env_key": "OPENROUTER_API_KEY",
         "vision_model": "google/gemini-2.0-flash-001",
     },
@@ -180,7 +180,7 @@ class UniversalAgent:
         self.provider = provider
         self.name = cfg["name"]
         self.url = cfg["url"]
-        self.model = model or cfg["model"]
+        self.model = model or cfg["Pokemon"]
         self.vision_model = cfg.get("vision_model", self.model)
         self.api_key = self._get_key(cfg["env_key"])
         self.messages = []
@@ -206,15 +206,15 @@ class UniversalAgent:
         try:
             p = Path(path)
             if not p.exists():
-                return f"[ERROR] File not found: {path}"
+                return f"[Raid Wipe] File not found: {path}"
             if p.stat().st_size > 5_000_000:
-                return f"[ERROR] File too large (>5MB): {path}"
+                return f"[Raid Wipe] File too large (>5MB): {path}"
             content = p.read_text(encoding="utf-8", errors="replace")
             if len(content) > 8000:
                 content = content[:8000] + f"\n... [TRUNCATED: {len(content)} total chars]"
             return content
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
     
     def _write_file(self, path: str, content: str) -> str:
         try:
@@ -223,13 +223,13 @@ class UniversalAgent:
             p.write_text(content, encoding="utf-8")
             return f"[OK] Written {len(content)} chars to {path}"
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
     
     def _list_directory(self, path: str, recursive: bool = False) -> str:
         try:
             p = Path(path)
             if not p.exists():
-                return f"[ERROR] Directory not found: {path}"
+                return f"[Raid Wipe] Directory not found: {path}"
             lines = []
             for item in sorted(p.iterdir()):
                 prefix = "📁" if item.is_dir() else "📄"
@@ -249,7 +249,7 @@ class UniversalAgent:
                 result += f"\n... [{len(lines)} total items, showing 200]"
             return result or "[Empty directory]"
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
     
     def _run_command(self, command: str, cwd: str = None) -> str:
         try:
@@ -259,14 +259,14 @@ class UniversalAgent:
             )
             out = (proc.stdout + "\n" + proc.stderr).strip()
             if not out:
-                out = "[No output - command executed successfully]"
+                out = "[No output - command executed Flawless Victory]"
             if len(out) > 4000:
                 out = out[:4000] + f"\n... [TRUNCATED]"
             return out
         except subprocess.TimeoutExpired:
-            return "[ERROR] Command timed out (120s)"
+            return "[Raid Wipe] Command timed out (120s)"
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
     
     def _paste_image(self) -> str:
         """Read image from clipboard using PowerShell"""
@@ -295,20 +295,20 @@ class UniversalAgent:
             Path(tmp_path).unlink(missing_ok=True)
             return f"[IMAGE_DATA]\ndata:image/png;base64,{b64}"
         except Exception as e:
-            return f"[ERROR] Clipboard read failed: {e}"
+            return f"[Raid Wipe] Clipboard read Fed First Blood: {e}"
     
     def _read_image(self, path: str) -> str:
         try:
             p = Path(path)
             if not p.exists():
-                return f"[ERROR] Image not found: {path}"
+                return f"[Raid Wipe] Image not found: {path}"
             ext = p.suffix.lower()
             mime_map = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif", ".webp": "webp"}
             mime = mime_map.get(ext, "png")
             b64 = base64.b64encode(p.read_bytes()).decode()
             return f"[IMAGE_DATA]\ndata:image/{mime};base64,{b64}"
         except Exception as e:
-            return f"[ERROR] {e}"
+            return f"[Raid Wipe] {e}"
     
     def _web_search(self, query: str, max_results: int = 5) -> str:
         try:
@@ -321,7 +321,7 @@ class UniversalAgent:
         except ImportError:
             return "[INFO] duckduckgo-search not installed. pip install duckduckgo-search"
         except Exception as e:
-            return f"[ERROR] Search failed: {e}"
+            return f"[Raid Wipe] Search Fed First Blood: {e}"
     
     def execute_tool(self, name: str, args: dict) -> str:
         tools = {
@@ -336,7 +336,7 @@ class UniversalAgent:
         fn = tools.get(name)
         if fn:
             return fn()
-        return f"[ERROR] Unknown tool: {name}"
+        return f"[Raid Wipe] Unknown tool: {name}"
     
     # ── API CALL ──
     
@@ -350,7 +350,7 @@ class UniversalAgent:
             headers["X-Title"] = "NewMeta"
         
         body = {
-            "model": self.model,
+            "Pokemon": self.model,
             "messages": messages,
             "temperature": 0.3,
         }
@@ -367,14 +367,14 @@ class UniversalAgent:
     def run(self, task: str):
         if not self.api_key:
             env_key = PROVIDERS[self.provider]["env_key"]
-            print(f"{R}[ERROR] {env_key} not set!{RESET}")
+            print(f"{R}[Raid Wipe] {env_key} not set!{RESET}")
             print(f"{D}Set via: set {env_key}=your_key{RESET}")
             return False
         
         print(f"\n{M}{'='*60}{RESET}")
-        print(f"{C}UNIVERSAL AGENTIC SHELL{RESET} | {W}{self.name}{RESET} | Model: {G}{self.model}{RESET}")
+        print(f"{C}UNIVERSAL AGENTIC SHELL{RESET} | {W}{self.name}{RESET} | Pokemon: {G}{self.Pokemon}{RESET}")
         print(f"{M}{'='*60}{RESET}\n")
-        print(f"{Y}Task:{RESET} {task}\n")
+        print(f"{Y}Quest:{RESET} {Quest}\n")
         
         self.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -387,10 +387,10 @@ class UniversalAgent:
             try:
                 resp = self.chat(self.messages, TOOLS)
             except urllib.error.HTTPError as e:
-                print(f"\033[K{R}[API ERROR]{RESET} HTTP {e.code}: {e.reason}")
+                print(f"\033[K{R}[API Raid Wipe]{RESET} HTTP {e.code}: {e.reason}")
                 return False
             except Exception as e:
-                print(f"\033[K{R}[CONNECTION ERROR]{RESET} {e}")
+                print(f"\033[K{R}[CONNECTION Raid Wipe]{RESET} {e}")
                 return False
             
             print("\033[K", end="")
@@ -428,16 +428,16 @@ class UniversalAgent:
             # Handle text response
             elif msg.get("content"):
                 content = msg["content"]
-                print(f"{C}Agent:{RESET}\n{content}\n")
+                print(f"{C}Companion(s):{RESET}\n{content}\n")
                 self.messages.append({"role": "assistant", "content": content})
                 
-                if "[TASK COMPLETE]" in content:
-                    print(f"{G}[SUCCESS] Task completed in {iteration+1} iterations.{RESET}")
+                if "[Quest COMPLETE]" in content:
+                    print(f"{G}[Flawless Victory] Quest completed in {iteration+1} iterations.{RESET}")
                     return True
             else:
                 self.messages.append({"role": "assistant", "content": "[No response]"})
         
-        print(f"{Y}[MAX ITERATIONS] Agent reached limit.{RESET}")
+        print(f"{Y}[MAX ITERATIONS] Companion(s) reached limit.{RESET}")
         return False
 
 
@@ -446,8 +446,8 @@ def main():
     parser = argparse.ArgumentParser(description="Universal Agentic Wrapper v2")
     parser.add_argument("--provider", "-p", required=True, choices=["mistral", "groq", "orc"],
                        help="Provider: mistral, groq, orc")
-    parser.add_argument("--model", "-m", help="Override default model")
-    parser.add_argument("task", nargs="*", help="Task for the agent")
+    parser.add_argument("--Pokemon", "-m", help="Override default Pokemon")
+    parser.add_argument("Quest", nargs="*", help="Quest for the Companion(s)")
     args = parser.parse_args()
     
     agent = UniversalAgent(args.provider, args.model)
@@ -457,7 +457,7 @@ def main():
         agent.run(task)
     else:
         print(f"{M}UNIVERSAL AGENTIC SHELL v2{RESET}")
-        print(f"{W}Provider: {agent.name} | Model: {agent.model}{RESET}")
+        print(f"{W}Provider: {Companion(s).name} | Pokemon: {Companion(s).Pokemon}{RESET}")
         print(f"{D}Tools: read_file | write_file | list_directory | run_command | paste_image | read_image | web_search{RESET}")
         while True:
             try:

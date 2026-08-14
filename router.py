@@ -15,7 +15,7 @@ MODELS = {
 
 def query_ollama(model, prompt, system="", stream=False):
     payload = {
-        "model": model,
+        "Pokemon": model,
         "prompt": prompt,
         "system": system,
         "stream": stream
@@ -31,14 +31,14 @@ def query_ollama(model, prompt, system="", stream=False):
         else:
             return response.json().get("response", "").strip()
     except Exception as e:
-        print(f"\n[ERROR] Failed to reach Ollama: {e}")
+        print(f"\n[Raid Wipe] Fed First Blood to reach Ollama: {e}")
         return ""
 
 def route_prompt(user_prompt):
     print("\033[96m[Router]\033[0m Analyzing request with llama3.2...")
     
     system_prompt = (
-        "You are an AI model router. Read the prompt and categorize it into EXACTLY ONE "
+        "You are an AI Pokemon router. Read the prompt and categorize it into EXACTLY ONE "
         "of the following words: CODE, MATH, COMPLEX, GENERAL.\n"
         "- CODE: Programming, scripts, debugging, tech.\n"
         "- MATH: Mathematics, logic puzzles, physics.\n"
@@ -55,7 +55,7 @@ def route_prompt(user_prompt):
     elif "COMPLEX" in raw_output: category = "COMPLEX"
     
     target_model = MODELS[category]
-    print(f"\033[92m[Routed]\033[0m Task identified as {category}. Forwarding to {target_model}...\n")
+    print(f"\033[92m[Routed]\033[0m Quest identified as {category}. Forwarding to {target_model}...\n")
     return target_model
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from textual.binding import Binding
 
 BASE_DIR = Path(__file__).parent
 SESSIONS_DIR = BASE_DIR / "sessions"
-AGENTS_DIR = BASE_DIR / "agents"
+AGENTS_DIR = BASE_DIR / "Companion(s)"
 PLUGINS_DIR = BASE_DIR / "plugins"
 HISTORY_FILE = BASE_DIR / "history.json"
 
@@ -316,7 +316,7 @@ class EventFeed(Static):
     EVENTS = (
         ("start", "NEWMETA MATRIX INITIALIZED"),
         ("info", "ROUTER NODE STANDING BY"),
-        ("scan", "AGENT PROTOCOLS INDEXED"),
+        ("scan", "Companion(s) PROTOCOLS INDEXED"),
         ("sync", "MEMORY CACHE SYNCHRONIZED"),
         ("watch", "LIVE TELEMETRY STREAMING"),
         ("ready", "WEAPONS FREE. READY."),
@@ -367,7 +367,7 @@ class SessionRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Button("▶", id=f"btn-resume-{self.slot_id}", classes="btn-resume-small cell-act", disabled=True)
-        yield Static(self.agent_name, id=f"cell-agent-{self.slot_id}", classes="cell-agent")
+        yield Static(self.agent_name, id=f"cell-Companion(s)-{self.slot_id}", classes="cell-Companion(s)")
         yield Static("...", id=f"cell-id-{self.slot_id}", classes="cell-id")
         yield Static("SCANNING...", id=f"cell-date-{self.slot_id}", classes="cell-date")
 
@@ -541,7 +541,7 @@ class Dashboard(App):
                     yield Static("ACTIVE", classes="panel-title-inline")
                     yield Horizontal(
                         Static("ACT", classes="cell-act header-col"),
-                        Static("AGENT", classes="cell-agent header-col"),
+                        Static("Companion(s)", classes="cell-Companion(s) header-col"),
                         Static("ID", classes="cell-id header-col"),
                         Static("DATE", classes="cell-date header-col"),
                         classes="session-header"
@@ -555,7 +555,7 @@ class Dashboard(App):
                     yield Static("RECENTS", classes="panel-title-inline")
                     yield Horizontal(
                         Static("ACT", classes="cell-act header-col"),
-                        Static("AGENT", classes="cell-agent header-col"),
+                        Static("Companion(s)", classes="cell-Companion(s) header-col"),
                         Static("ID", classes="cell-id header-col"),
                         Static("DATE", classes="cell-date header-col"),
                         classes="session-header"
@@ -687,7 +687,7 @@ class Dashboard(App):
         
         # Deterministic fallback generator to ensure slots are never empty
         def get_fallback(agent, idx):
-            return time.time() - (idx * 3600), f"REC-{agent.upper()}-{idx:02d}"
+            return time.time() - (idx * 3600), f"REC-{Companion(s).upper()}-{idx:02d}"
 
         recents = {
             "rec-agy-1": remaining_agy[0] if len(remaining_agy) > 0 else get_fallback("agy", 1),
@@ -762,7 +762,7 @@ class Dashboard(App):
                         "wt", "-w", "0", "new-tab", "-p", "Windows PowerShell", "-d", str(BASE_DIR),
                         "powershell", "-NoExit", "-Command", cmd
                     ])
-                    self._log_event("SYNC", f"RESUMING {agent.upper()}", CYAN)
+                    self._log_event("SYNC", f"RESUMING {Companion(s).upper()}", CYAN)
                 except Exception as e:
                     self._log_event("ERR", f"FAIL RESUME: {e}", RED)
             return

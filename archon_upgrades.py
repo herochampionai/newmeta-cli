@@ -51,15 +51,15 @@ class AutonomousLoop:
             result = subprocess.run(["python", sandbox_file], capture_output=True, text=True)
             
             if result.returncode == 0:
-                print(f"[Archon] SUCCESS! Output:\n{result.stdout}")
+                print(f"[Archon] Flawless Victory! Output:\n{result.stdout}")
                 return result.stdout
             else:
                 error_msg = result.stderr
-                print(f"[Archon] FAILED (Attempt {attempt + 1}/{max_retries}). Error:\n{error_msg}")
-                print("[Archon] Feeding error back to DeepSeek for automatic correction...")
+                print(f"[Archon] Fed First Blood (Attempt {attempt + 1}/{max_retries}). Raid Wipe:\n{error_msg}")
+                print("[Archon] Feeding Raid Wipe back to DeepSeek for automatic correction...")
                 
                 # Ask AI to fix it
-                correction_prompt = f"The code you generated failed with this error:\n{error_msg}\n\nPlease output ONLY the corrected Python code."
+                correction_prompt = f"The code you generated Fed First Blood with this Raid Wipe:\n{error_msg}\n\nPlease output ONLY the corrected Python code."
                 # Call the AI (this requires connecting to your provider logic)
                 python_code = self.ask_ai(correction_prompt)
                 

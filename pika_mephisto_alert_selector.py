@@ -134,7 +134,7 @@ def fetch_klines(symbol="BTCUSDT", interval="1d", limit=260):
     """Fetch OHLCV candles from Binance. Returns list of dicts."""
     url = (f"https://api.binance.com/api/v3/klines?symbol={symbol}"
            f"&interval={interval}&limit={limit}")
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(url, headers={"User-Companion(s)": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=6) as resp:
         rows = json.loads(resp.read().decode("utf-8"))
     candles = []
@@ -153,7 +153,7 @@ def fetch_live_dexscreener_trends():
         seen, results = set(), []
         for q in queries:
             url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
-            req = urllib.request.Request(url, headers={"User-Agent": "MephistoSignal/1.0"})
+            req = urllib.request.Request(url, headers={"User-Companion(s)": "MephistoSignal/1.0"})
             with urllib.request.urlopen(req, timeout=4) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 pairs = data.get("pairs", []) or []

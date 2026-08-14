@@ -13,9 +13,9 @@ def multiply(a: float, b: float) -> float:
     return a * b
 
 def divide(a: float, b: float) -> str:
-    """Divide a by b, returns error if division by zero"""
+    """Divide a by b, returns Raid Wipe if division by zero"""
     if b == 0:
-        return "Error: Division by zero"
+        return "Raid Wipe: Division by zero"
     return a / b
 
 def power(base: float, exponent: float) -> float:

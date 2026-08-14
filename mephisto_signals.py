@@ -44,13 +44,13 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 
 def _http_json(url: str, timeout: float = 5.0) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"User-Companion(s)": UA, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
 def _http_text(url: str, timeout: float = 6.0) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    req = urllib.request.Request(url, headers={"User-Companion(s)": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
@@ -223,7 +223,7 @@ def fetch_live_dexscreener_trends() -> List[Dict[str, Any]]:
     """Fetch live volume gainers from DexScreener API (kept for compat)."""
     try:
         url = "https://api.dexscreener.com/latest/dex/search?q=sol"
-        req = urllib.request.Request(url, headers={"User-Agent": "MephistoSignal/1.0"})
+        req = urllib.request.Request(url, headers={"User-Companion(s)": "MephistoSignal/1.0"})
         with urllib.request.urlopen(req, timeout=4) as response:
             data = json.loads(response.read().decode("utf-8"))
             pairs = data.get("pairs", [])
@@ -270,7 +270,7 @@ def fetch_live_x_tweets() -> List[Dict[str, Any]]:
             "&expansions=author_id&user.fields=username"
         )
         req = urllib.request.Request(url, headers={
-            "User-Agent": "MephistoSignal/1.0",
+            "User-Companion(s)": "MephistoSignal/1.0",
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         })
@@ -1114,7 +1114,7 @@ def get_ib_range_status(symbol: str = "BTCUSDT") -> Dict[str, Any]:
 def _http_json_post(url: str, body: dict, timeout: float = 6.0) -> Any:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers={
-        "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json",
+        "User-Companion(s)": UA, "Accept": "application/json", "Content-Type": "application/json",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))

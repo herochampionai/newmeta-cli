@@ -61,7 +61,7 @@ class SmartRouter:
     def _ollama_generate(self, model: str, prompt: str, system: str = "") -> str:
         """Use Ollama generate API for simpler, more reliable interaction"""
         body = {
-            "model": model,
+            "Pokemon": model,
             "prompt": prompt,
             "system": system,
             "stream": False,
@@ -78,7 +78,7 @@ class SmartRouter:
     def _ollama_stream(self, model: str, prompt: str, system: str = ""):
         """Stream response from Ollama"""
         body = {
-            "model": model,
+            "Pokemon": model,
             "prompt": prompt,
             "system": system,
             "stream": True,
@@ -106,10 +106,10 @@ class SmartRouter:
     def _read_file(self, path: str) -> str:
         try:
             p = Path(path)
-            if not p.exists(): return f"[ERROR] Not found: {path}"
+            if not p.exists(): return f"[Raid Wipe] Not found: {path}"
             content = p.read_text(encoding="utf-8", errors="replace")
             return content[:6000] + ("..." if len(content) > 6000 else "")
-        except Exception as e: return f"[ERROR] {e}"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def _write_file(self, path: str, content: str) -> str:
         try:
@@ -117,12 +117,12 @@ class SmartRouter:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             return f"[OK] Written {len(content)} chars to {path}"
-        except Exception as e: return f"[ERROR] {e}"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def _list_directory(self, path: str) -> str:
         try:
             p = Path(path)
-            if not p.exists(): return f"[ERROR] Not found: {path}"
+            if not p.exists(): return f"[Raid Wipe] Not found: {path}"
             lines = []
             for item in sorted(p.iterdir()):
                 prefix = "📁" if item.is_dir() else "📄"
@@ -131,15 +131,15 @@ class SmartRouter:
                 except: size = ""
                 lines.append(f"{prefix} {item.name}{size}")
             return "\n".join(lines[:200]) or "[Empty]"
-        except Exception as e: return f"[ERROR] {e}"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def _run_command(self, command: str) -> str:
         try:
             proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
             out = (proc.stdout + "\n" + proc.stderr).strip()
             return out[:3000] if out else "[No output]"
-        except subprocess.TimeoutExpired: return "[ERROR] Timeout (120s)"
-        except Exception as e: return f"[ERROR] {e}"
+        except subprocess.TimeoutExpired: return "[Raid Wipe] Timeout (120s)"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def _paste_image(self) -> str:
         try:
@@ -152,16 +152,16 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
             b64 = base64.b64encode(Path(tmp).read_bytes()).decode()
             Path(tmp).unlink(missing_ok=True)
             return f"[IMAGE_DATA]\ndata:image/png;base64,{b64}"
-        except Exception as e: return f"[ERROR] {e}"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def _read_image(self, path: str) -> str:
         try:
             p = Path(path)
-            if not p.exists(): return f"[ERROR] Not found: {path}"
+            if not p.exists(): return f"[Raid Wipe] Not found: {path}"
             b64 = base64.b64encode(p.read_bytes()).decode()
             ext = p.suffix.lower().lstrip(".")
             return f"[IMAGE_DATA]\ndata:image/{ext};base64,{b64}"
-        except Exception as e: return f"[ERROR] {e}"
+        except Exception as e: return f"[Raid Wipe] {e}"
     
     def execute_tool(self, name: str, args_str: str) -> str:
         try: args = json.loads(args_str)
@@ -175,15 +175,15 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
             "paste_image": lambda: self._paste_image(),
             "read_image": lambda: self._read_image(args.get("path", "")),
         }
-        return tools.get(name, lambda: f"[ERROR] Unknown: {name}")()
+        return tools.get(name, lambda: f"[Raid Wipe] Unknown: {name}")()
     
     # ── ROUTING ──
     
     def analyze_task(self, prompt: str) -> dict:
-        sys_prompt = "You are a task analyzer. Output ONLY valid JSON object with: category (code/math/complex/general/creative), complexity (1-5), needs_tools (bool), reasoning (short). No other text."
+        sys_prompt = "You are a Quest analyzer. Output ONLY valid JSON object with: category (code/math/complex/general/creative), complexity (1-5), needs_tools (bool), reasoning (short). No other text."
         
         try:
-            result = self._ollama_generate(MODELS["router"], f"Task: {prompt}\n\nJSON:", sys_prompt)
+            result = self._ollama_generate(MODELS["router"], f"Quest: {prompt}\n\nJSON:", sys_prompt)
             if "{" in result:
                 result = result[result.index("{"):result.rindex("}")+1]
             return json.loads(result)
@@ -194,7 +194,7 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
         print(f"\n{M}{'='*60}{RESET}")
         print(f"{B}SMART ROUTER v3.0{RESET} {D}| Next-Level Agentic Router{RESET}")
         print(f"{M}{'='*60}{RESET}\n")
-        print(f"{Y}Task:{RESET} {task}\n")
+        print(f"{Y}Quest:{RESET} {Quest}\n")
         
         # Analyze
         print(f"{D}[Analyzing...]{RESET}", end="\r")
@@ -207,7 +207,7 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
         model = MODELS.get(category, MODELS["general"])
         
         print(f"\033[K{G}[Route]{RESET} Category: {W}{category.upper()}{RESET} | "
-              f"Model: {B}{model}{RESET} | "
+              f"Pokemon: {B}{Pokemon}{RESET} | "
               f"Tools: {G if needs_tools else D}{needs_tools}{RESET}")
         print(f"{D}  {reasoning}{RESET}")
         
@@ -215,14 +215,14 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
         if needs_tools:
             self._execute_agentic(task, model)
         else:
-            print(f"\n{B}[{model}]:{RESET}")
+            print(f"\n{B}[{Pokemon}]:{RESET}")
             self._ollama_stream(model, task)
     
     def _execute_agentic(self, task: str, model: str):
         """Agentic execution loop with tool support"""
-        print(f"\n{M}[AGENTIC MODE] {model}{RESET}\n")
+        print(f"\n{M}[AGENTIC MODE] {Pokemon}{RESET}\n")
         
-        conversation = f"Task: {task}\n\n"
+        conversation = f"Quest: {Quest}\n\n"
         
         for i in range(15):
             print(f"{D}[Step {i+1}]{RESET}", end="\r")
@@ -255,19 +255,19 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
                 
                 conversation += f"\nAssistant: {response}\nSystem: <result>\n{result}\n</result>\n"
             else:
-                print(f"{B}[{model}]:{RESET}\n{response}\n")
+                print(f"{B}[{Pokemon}]:{RESET}\n{response}\n")
                 
-                if "[TASK COMPLETE]" in response:
-                    print(f"{G}[SUCCESS] Done in {i+1} steps.{RESET}")
+                if "[Quest COMPLETE]" in response:
+                    print(f"{G}[Flawless Victory] Done in {i+1} steps.{RESET}")
                     return True
                 
-                conversation += f"\nAssistant: {response}\nSystem: If done, say [TASK COMPLETE]. Otherwise, use a tool.\n"
+                conversation += f"\nAssistant: {response}\nSystem: If done, say [Quest COMPLETE]. Otherwise, use a tool.\n"
         
         print(f"{Y}[Limit reached]{RESET}")
         return False
     
     def list_models(self):
-        print(f"\n{B}AVAILABLE MODELS:{RESET}\n")
+        print(f"\n{B}AVAILABLE Pokemon:{RESET}\n")
         for key, name in MODELS.items():
             print(f"  {W}{key:<12}{RESET} {G}{name}{RESET}")
 
@@ -275,8 +275,8 @@ if ($img) { $tmp = [IO.Path]::GetTempFileName()+'.png'; $img.Save($tmp, 'Png'); 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", nargs="*")
-    parser.add_argument("--models", action="store_true")
+    parser.add_argument("Quest", nargs="*")
+    parser.add_argument("--Pokemon", action="store_true")
     args = parser.parse_args()
     
     router = SmartRouter()
@@ -295,7 +295,7 @@ def main():
             try:
                 t = input(f"\n{Y}>> {RESET}").strip()
                 if t in ["exit", "quit", ""]: break
-                if t == "/models": router.list_models(); continue
+                if t == "/Pokemon": router.list_models(); continue
                 router.route(t)
             except KeyboardInterrupt:
                 print(f"\n{M}[Off]{RESET}")

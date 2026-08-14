@@ -6,7 +6,7 @@ def list_directory(path: str = ".") -> str:
     try:
         files = os.listdir(path)
         return "\n".join(files) if files else "Empty directory"
-    except Exception as e: return f"Error: {e}"
+    except Exception as e: return f"Raid Wipe: {e}"
 
 def get_file_info(path: str) -> str:
     """Get file metadata"""
@@ -14,7 +14,7 @@ def get_file_info(path: str) -> str:
     try:
         stat = os.stat(path)
         return f"Size: {stat.st_size} bytes\nModified: {stat.st_mtime}\nCreated: {stat.st_ctime}"
-    except Exception as e: return f"Error: {e}"
+    except Exception as e: return f"Raid Wipe: {e}"
 
 def search_files(pattern: str, path: str = ".") -> str:
     """Search for files matching pattern"""
@@ -22,7 +22,7 @@ def search_files(pattern: str, path: str = ".") -> str:
     try:
         files = glob.glob(f"{path}/**/{pattern}", recursive=True)
         return "\n".join(files) if files else "No matches"
-    except Exception as e: return f"Error: {e}"
+    except Exception as e: return f"Raid Wipe: {e}"
 
 def count_lines(path: str) -> str:
     """Count lines in a file"""
@@ -30,7 +30,7 @@ def count_lines(path: str) -> str:
         with open(path, 'r', encoding='utf-8') as f:
             lines = len(f.readlines())
         return f"Lines: {lines}"
-    except Exception as e: return f"Error: {e}"
+    except Exception as e: return f"Raid Wipe: {e}"
 
 list_directory._is_tool = True
 list_directory._params = {"type": "object", "properties": {"path": {"type": "string"}}, "required": []}

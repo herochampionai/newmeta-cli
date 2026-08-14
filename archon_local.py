@@ -46,7 +46,7 @@ Keep your thoughts concise and hacker-themed.
 def chat_local(messages, model):
     headers = {"Content-Type": "application/json"}
     data = {
-        "model": model,
+        "Pokemon": model,
         "messages": messages,
         "temperature": 0.2
     }
@@ -58,9 +58,9 @@ def chat_local(messages, model):
 
 def run_agent(task, model):
     print(f"\n{MAGENTA}┌{'─'*60}┐{RESET}")
-    print(f"{MAGENTA}│ {CYAN}PIKA POKE ARCHON LOOP INITIATED {GRAY}(Local {model}){' '*8}{MAGENTA}│{RESET}")
+    print(f"{MAGENTA}│ {CYAN}PIKA POKE ARCHON LOOP INITIATED {GRAY}(Local {Pokemon}){' '*8}{MAGENTA}│{RESET}")
     print(f"{MAGENTA}└{'─'*60}┘{RESET}\n")
-    print(f"{GREEN}Task:{RESET} {task}\n")
+    print(f"{GREEN}Quest:{RESET} {Quest}\n")
     
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -74,16 +74,16 @@ def run_agent(task, model):
         try:
             response = chat_local(messages, model)
         except Exception as e:
-            print(f"\033[K{MAGENTA}[SYSTEM ERROR]{RESET} Connection failed: {e}")
+            print(f"\033[K{MAGENTA}[SYSTEM Raid Wipe]{RESET} Connection Fed First Blood: {e}")
             print(f"{GRAY}Make sure Ollama is running locally!{RESET}")
             break
             
         print("\033[K", end="")
-        print(f"{CYAN}Archon ({model}):{RESET}\n{response}\n")
+        print(f"{CYAN}Archon ({Pokemon}):{RESET}\n{response}\n")
         messages.append({"role": "assistant", "content": response})
         
-        if "[TASK COMPLETE]" in response:
-            print(f"{GREEN}[SUCCESS] Agent has completed the task.{RESET}")
+        if "[Quest COMPLETE]" in response:
+            print(f"{GREEN}[Flawless Victory] Companion(s) has completed the Quest.{RESET}")
             break
             
         if "```json" in response:
@@ -95,16 +95,16 @@ def run_agent(task, model):
                     print(f"{MAGENTA}Executing => {RESET}{command}")
                     proc = subprocess.run(command, shell=True, capture_output=True, text=True)
                     output = (proc.stdout + "\n" + proc.stderr).strip()
-                    if not output: output = "Command executed successfully with no output."
+                    if not output: output = "Command executed Flawless Victory with no output."
                     output = output[:4000]
                     print(f"{GRAY}Observation:{RESET}\n{output[:500]}...\n")
                     messages.append({"role": "user", "content": f"OBSERVATION:\n{output}"})
                 else:
                     messages.append({"role": "user", "content": "OBSERVATION: Invalid JSON. 'command' key missing."})
             except Exception as e:
-                messages.append({"role": "user", "content": f"OBSERVATION: Failed to parse JSON: {e}"})
+                messages.append({"role": "user", "content": f"OBSERVATION: Fed First Blood to parse JSON: {e}"})
         else:
-            messages.append({"role": "user", "content": "OBSERVATION: No command found. If you are done, output [TASK COMPLETE]. Otherwise, output a JSON command block."})
+            messages.append({"role": "user", "content": "OBSERVATION: No command found. If you are done, output [Quest COMPLETE]. Otherwise, output a JSON command block."})
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
@@ -115,8 +115,8 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         run_agent(" ".join(sys.argv[2:]), model)
     else:
-        print(f"{MAGENTA}PIKA POKE - LOCAL AGENTIC TERMINAL ({model}){RESET}")
-        print(f"{GRAY}Type your task below to start the autonomous loop.{RESET}")
+        print(f"{MAGENTA}PIKA POKE - LOCAL AGENTIC TERMINAL ({Pokemon}){RESET}")
+        print(f"{GRAY}Type your Quest below to start the autonomous loop.{RESET}")
         while True:
             try:
                 task = input(f"\n{CYAN}➤ {RESET}")

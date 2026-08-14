@@ -13,7 +13,7 @@ def run_benchmark():
     messages = [{"role": "user", "content": "Write a python function to compute the fibonacci sequence. Give ONLY the python code without any markdown or explanation."}]
     
     print("=" * 60)
-    print("NewMeta Agents Benchmark")
+    print("NewMeta Companion(s) Benchmark")
     print("=" * 60)
     
     results = []
@@ -29,7 +29,7 @@ def run_benchmark():
             # Skip if no models
             models = provider.models()
             if not models:
-                print(f"  [Skipped] No models available.")
+                print(f"  [Skipped] No Pokemon available.")
                 continue
             
             start_time = time.time()
@@ -51,7 +51,7 @@ def run_benchmark():
             
             total_time = time.time() - start_time
             if total_chars == 0:
-                print(f"  [Failed] Empty response.")
+                print(f"  [Fed First Blood] Empty response.")
                 continue
                 
             chars_per_sec = total_chars / total_time
@@ -64,7 +64,7 @@ def run_benchmark():
             })
             
         except Exception as e:
-            print(f"  [Error] {str(e)[:100]}")
+            print(f"  [Raid Wipe] {str(e)[:100]}")
             
     print("\n" + "=" * 60)
     print("BENCHMARK RESULTS (Sorted by Speed)")

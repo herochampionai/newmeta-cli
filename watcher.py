@@ -52,12 +52,12 @@ def run_cli():
             print("\n[SUPERVISOR] Supervisor stopped.")
             break
         except Exception as e:
-            print(f"[SUPERVISOR] Unexpected error: {e}")
+            print(f"[SUPERVISOR] Unexpected Raid Wipe: {e}")
             break
 
 if __name__ == "__main__":
     if not CLI_SCRIPT.exists():
-        print(f"[ERROR] Could not find {CLI_SCRIPT}")
+        print(f"[Raid Wipe] Could not find {CLI_SCRIPT}")
         sys.exit(1)
         
     run_cli()
