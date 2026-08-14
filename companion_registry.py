@@ -20,40 +20,44 @@ class Summon:
     hook_default: str = "caster"
     aliases: tuple[str, ...] = ()
     house: str = ""
+    school: str = ""
 
 
 POKEMONS = [
-    Summon("bulba", "Bulba", "pokemon", "grass", "🦎", "The Vine Warden",
-           "Grass starter. Sleeps in sun, strikes in shadow."),
-    Summon("char", "Char", "pokemon", "fire", "🐉", "The Flame Fang",
-           "Fire starter. Smolders quietly, erupts on command."),
-    Summon("turtle", "Turtle", "pokemon", "water", "🐢", "The Automation Turtle",
+    Summon("bulba", "Bulba", "pokemon", "Grass/Earth", "🦎", "The Vine Warden",
+           "Grass starter. Sleeps in sun, strikes in shadow.",
+           house="Hufflepuff", school="Herbology"),
+    Summon("char", "Char", "pokemon", "Fire/Lava", "🐉", "The Flame Fang",
+           "Fire starter. Smolders quietly, erupts on command.",
+           house="Gryffindor", school="Evocation"),
+    Summon("turtle", "Turtle", "pokemon", "Water/Ice", "🐢", "The Automation Turtle",
            "Squirt + Pika Turtle unified — brothers of Pika Poke from the companion teams, one shared XP line. Automation turtle, shell online. Speaks inside Antigravity.",
            hook_default="hooker",
            aliases=("pika turtle", "squirt", "pika squirtle"),
-           house="Hufflepuff"),
-    Summon("pikapoke", "Pika Poke", "pokemon", "electric", "🐯", "The Invoker Archon",
+           house="Hufflepuff", school="Abjuration/Charms"),
+    Summon("pikapoke", "Pika Poke", "pokemon", "Electric/Storm", "🐯", "The Invoker Archon",
            "The permanent Tiger-Lion Invoker Archon — brothers of Pika Turtle from the companion teams. Highly advanced AI developer companion, vault guardian.",
            hook_default="matrix",
            aliases=("pika poke", "pika", "pikachu archon"),
-           house="Gryffindor"),
+           house="Gryffindor", school="Transfiguration/Cybermancy"),
 ]
 
 COMPANIONS = [
-    Summon("zouzou", "Zouzou", "companion", "shadow", "🦉", "The Empath",
+    Summon("zouzou", "Zouzou", "companion", "Shadow/Nether", "🦉", "The Empath",
            "Offline coding goose. Evolves Reckless → Outlaw → Quant (position sizing) → Sniper.",
-           house="Slytherin"),
-    Summon("mephissa", "Mephissa", "companion", "mist", "🕯️", "The DJ",
+           house="Slytherin", school="Potions/Enchantment"),
+    Summon("mephissa", "Mephissa", "companion", "Mist/Aether", "🕯️", "The DJ",
            "Naughty coding companion; Mephissa DJ spins in the TUI. Mixes and grabs high-res video from any source. Lessons: deep-reasoning audits (Semgrep/CodeQL) and privacy/OPSEC tricks.",
-           house="Ravenclaw"),
+           house="Ravenclaw", school="Divination/Illusions"),
 ]
 
 TITANS = [
-    Summon("mephisto", "Mephisto", "titan", "void", "😈", "The Router Master",
+    Summon("mephisto", "Mephisto", "titan", "Void/Chaos", "😈", "The Router Master",
            "Income engine. Algo trading (Python/MQL5), multi-source tweet & market signals (BUY/SELL/pump-dump), live positions.",
            house="Slytherin",
            hook_default="matrix",
-           aliases=("quant", "quant algo", "algo trader", "mephisto quant")),
+           aliases=("quant", "quant algo", "algo trader", "mephisto quant"),
+           school="Defense Against the Dark Arts/Necromancy"),
 ]
 
 PANTHEON = {
@@ -70,7 +74,7 @@ SUMMON_ALIASES = {
     for alias in s.aliases
 }
 
-TITLES = ["Apprentice", "Rogue", "Shadow", "CyberMage", "Archon", "God-Tier"]
+TITLES = ["Initiate", "Acolyte", "Mage", "Grand Magus", "Archon", "God-Tier Invoker"]
 XP_STAGES = [0, 100, 300, 700, 1500, 3000]
 
 HOUSE_COLORS = {
@@ -78,4 +82,14 @@ HOUSE_COLORS = {
     "Slytherin": "#2a623d",
     "Ravenclaw": "#222f5b",
     "Hufflepuff": "#ecb939",
+}
+
+SCHOOL_DISCIPLINES = {
+    "Herbology": "Nature & Restoration",
+    "Evocation": "Elemental Destruction",
+    "Abjuration/Charms": "Wards & Automation",
+    "Transfiguration/Cybermancy": "Matrix Code Shifting",
+    "Potions/Enchantment": "Algorithmic Brewing",
+    "Divination/Illusions": "Frontend & Signals Tracking",
+    "Defense Against the Dark Arts/Necromancy": "System Security & Trading"
 }
