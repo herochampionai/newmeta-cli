@@ -45,10 +45,10 @@ POKEMONS = [
 COMPANIONS = [
     Summon("zouzou", "Zouzou", "companion", "Shadow/Nether", "🦉", "The Empath",
            "Offline coding goose. Evolves Reckless → Outlaw → Quant (position sizing) → Sniper.",
-           house="Slytherin", school="Potions/Enchantment"),
+           house="Ravenclaw", school="Potions/Enchantment"),
     Summon("mephissa", "Mephissa", "companion", "Mist/Aether", "🕯️", "The DJ",
            "Naughty coding companion; Mephissa DJ spins in the TUI. Mixes and grabs high-res video from any source. Lessons: deep-reasoning audits (Semgrep/CodeQL) and privacy/OPSEC tricks.",
-           house="Ravenclaw", school="Divination/Illusions"),
+           house="Durmstrang", school="Divination/Illusions"),
 ]
 
 TITANS = [
@@ -79,9 +79,18 @@ XP_STAGES = [0, 100, 300, 700, 1500, 3000]
 
 HOUSE_COLORS = {
     "Gryffindor": "#ae0001",
-    "Slytherin": "#2a623d",
-    "Ravenclaw": "#222f5b",
     "Hufflepuff": "#ecb939",
+    "Slytherin": "#2a623d",
+    "Durmstrang": "#8b0000",
+    "Ravenclaw": "#222f5b",
+}
+
+SCHOOL_ALIGNMENTS = {
+    "Gryffindor": "Disciplined",
+    "Hufflepuff": "Disciplined",
+    "Slytherin": "Naughty",
+    "Durmstrang": "Naughty",
+    "Ravenclaw": "Balanced"
 }
 
 SCHOOL_DISCIPLINES = {
