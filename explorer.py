@@ -97,9 +97,14 @@ from textual.binding import Binding
 from textual.events import Key, MouseDown, MouseMove, MouseScrollUp, MouseScrollDown, MouseUp, Paste
 
 # === AGENT IMPORTS ===
+# Split deliberately: langchain_core (tool decorator + message classes) is a
+# ~3s import and is needed at module load time for the @tool-decorated
+# functions below. langchain_openai/langgraph are a SEPARATE, much heavier
+# chain (langchain_openai pulls in transformers/huggingface_hub -- measured
+# ~57s cold) that's only actually needed once a QwenAgent is instantiated,
+# not just to import this module for NME_TIPS/describe_clipboard_payload/
+# play_sfx -- every switch-tui launch used to eat that 57s for nothing.
 try:
-    from langchain_openai import ChatOpenAI
-    from langgraph.prebuilt import create_react_agent
     from langchain_core.tools import tool
     from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
     AGENT_AVAILABLE = True
@@ -109,6 +114,25 @@ except ImportError as e:
     # Dummy decorator to prevent NameError so the UI can launch and show the error
     def tool(func):
         return func
+
+_HEAVY_AGENT_LIBS_LOADED = False
+ChatOpenAI = None
+create_react_agent = None
+
+
+def _load_heavy_agent_libs() -> None:
+    """Lazy-loads ChatOpenAI/create_react_agent on first real use (QwenAgent
+    construction) instead of at module import time. Raises ImportError on
+    failure -- callers (QwenAgent.__init__ and its call sites) already handle
+    that via try/except, same as before this was split out."""
+    global _HEAVY_AGENT_LIBS_LOADED, ChatOpenAI, create_react_agent
+    if _HEAVY_AGENT_LIBS_LOADED:
+        return
+    from langchain_openai import ChatOpenAI as _ChatOpenAI
+    from langgraph.prebuilt import create_react_agent as _create_react_agent
+    ChatOpenAI = _ChatOpenAI
+    create_react_agent = _create_react_agent
+    _HEAVY_AGENT_LIBS_LOADED = True
 
 # ============================================================
 # 🗓️ PROJECT TIMELINE / HUD CONTENT
@@ -151,15 +175,15 @@ def render_pika_bar(ctx_pct: int = 22, active_agents: int = 0) -> str:
     pct = int((xp / max_xp) * 10) if max_xp else 5
     bar_str = "#" * pct + "-" * (10 - pct)
     tot_saved = stats.get("saved_tokens_total", "106.0k")
-    agent_str = f"⚡ {active_agents} Companion(s)" if active_agents == 1 else f"⚡ {active_agents} Companion(s)"
+    agent_str = f"⚡ {active_agents} Agent" if active_agents == 1 else f"⚡ {active_agents} Agents"
     return (
-        f"| PIKA POKE [Lv.{lvl} Invoker Companion] [{bar_str}] {xp}/{max_xp} XP | "
+        f"| PIKA POKE [Lv.{lvl} Hacker Companion] [{bar_str}] {xp}/{max_xp} XP | "
         f"🛡️ Saved: {tot_saved} | ctx: {ctx_pct}% | {agent_str} |"
     )
 
 DEFAULT_TIMELINE_TASKS = [
     {"label": "Recon & crawl workspace", "status": "done", "note": "indexed codebase"},
-    {"label": "Spin up Companion(s) stack", "status": "done", "note": "Pokemon + tools online"},
+    {"label": "Spin up agent stack", "status": "done", "note": "models + tools online"},
     {"label": "Map MCP servers", "status": "active", "note": "watching sockets"},
     {"label": "Memorise session log", "status": "todo", "note": "jsonl store"},
     {"label": "Deep search vector index", "status": "todo", "note": "offline"},
@@ -167,7 +191,7 @@ DEFAULT_TIMELINE_TASKS = [
 ]
 
 NME_TIPS = [
-    "Alt+Shift+V pastes clipboard text or image",
+    "Alt+V pastes clipboard text or image",
     "Right-click the prompt box to paste",
     "Double-click text to select a whole word",
     "Ctrl+U clears the prompt line",
@@ -180,7 +204,7 @@ COMPANION_LINES = [
     "pikapoke: eyeing the market telemetry",
     "pikaturtle: mapping requirements into bullet points",
     "pikapoke: hums in the obsidian shell",
-    "pikaturtle: casting efficiency spells on giant Pokemon",
+    "pikaturtle: casting efficiency spells on giant models",
     "pikapoke: keeping the pokes deck shuffled",
 ]
 
@@ -194,13 +218,13 @@ def read_file(file_path: str) -> str:
     try:
         path = Path(file_path)
         if not path.exists():
-            return f"Raid Wipe: File '{file_path}' not found."
+            return f"Error: File '{file_path}' not found."
         content = path.read_text(encoding="utf-8")
         if len(content) > 15000:
             return content[:15000] + "\n\n[...TRUNCATED - file too large...]"
         return content
     except Exception as e:
-        return f"Raid Wipe reading file: {str(e)}"
+        return f"Error reading file: {str(e)}"
 
 @tool
 def write_file(file_path: str, content: str) -> str:
@@ -209,9 +233,9 @@ def write_file(file_path: str, content: str) -> str:
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return f"Flawless Victory wrote {len(content)} characters to {file_path}"
+        return f"Successfully wrote {len(content)} characters to {file_path}"
     except Exception as e:
-        return f"Raid Wipe writing file: {str(e)}"
+        return f"Error writing file: {str(e)}"
 
 @tool
 def list_directory(dir_path: str = ".") -> str:
@@ -219,7 +243,7 @@ def list_directory(dir_path: str = ".") -> str:
     try:
         path = Path(dir_path)
         if not path.is_dir():
-            return f"Raid Wipe: '{dir_path}' is not a directory."
+            return f"Error: '{dir_path}' is not a directory."
         items = []
         for item in sorted(path.iterdir()):
             prefix = "📁" if item.is_dir() else "📄"
@@ -227,7 +251,7 @@ def list_directory(dir_path: str = ".") -> str:
             items.append(f"{prefix} {item.name}{size}")
         return "\n".join(items) if items else "Empty directory."
     except Exception as e:
-        return f"Raid Wipe listing directory: {str(e)}"
+        return f"Error listing directory: {str(e)}"
 
 @tool
 def search_in_files(directory: str, search_term: str) -> str:
@@ -248,7 +272,7 @@ def search_in_files(directory: str, search_term: str) -> str:
                     pass
         return "\n".join(results) if results else f"No matches found for '{search_term}'."
     except Exception as e:
-        return f"Raid Wipe searching: {str(e)}"
+        return f"Error searching: {str(e)}"
 
 @tool
 def get_current_time() -> str:
@@ -264,8 +288,8 @@ def play_sfx(kind: str = "tap") -> None:
         "tap": [(660, 45)],
         "attach": [(520, 45), (780, 70)],
         "resume": [(392, 55), (523, 55), (659, 85)],
-        "Pokemon": [(740, 45), (880, 45), (988, 80)],
-        "Raid Wipe": [(220, 90), (165, 130)],
+        "model": [(740, 45), (880, 45), (988, 80)],
+        "error": [(220, 90), (165, 130)],
         "victory": [(523, 45), (659, 45), (784, 45), (1046, 120)],
     }
     notes = patterns.get(kind, patterns["tap"])
@@ -317,7 +341,7 @@ class McpClient:
     def _request(self, method: str, params=None, req_id=None, notify=False):
         import uuid
         if self._proc is None:
-            raise RuntimeError(f"MCP server '{self.name}' Fed First Blood to start: {getattr(self, '_error', '?')}")
+            raise RuntimeError(f"MCP server '{self.name}' failed to start: {getattr(self, '_error', '?')}")
         payload = {"jsonrpc": "2.0", "method": method}
         if not notify:
             payload["id"] = req_id or str(uuid.uuid4())
@@ -331,8 +355,8 @@ class McpClient:
         if not line:
             raise RuntimeError(f"MCP server '{self.name}' closed the stream")
         resp = json.loads(line)
-        if "Raid Wipe" in resp:
-            raise RuntimeError(f"MCP Raid Wipe ({self.name}): {resp['Raid Wipe']}")
+        if "error" in resp:
+            raise RuntimeError(f"MCP error ({self.name}): {resp['error']}")
         return resp.get("result")
 
     def initialize(self):
@@ -367,10 +391,10 @@ def _mcp_call(client, tool_name, args=None):
     try:
         result = client.call_tool(tool_name, args or {})
     except Exception as e:
-        return f"[Raid Wipe] {str(e)}"
+        return f"[ERROR] {str(e)}"
     if result.get("isError"):
         parts = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
-        return "[MCP Raid Wipe] " + " ".join(parts)
+        return "[MCP ERROR] " + " ".join(parts)
     parts = []
     for c in result.get("content", []):
         if c.get("type") == "text":
@@ -425,13 +449,13 @@ def build_dynamic_tools(config_path=None):
             continue
         client = McpClient(name, command, sconf.get("args"), sconf.get("cwd"))
         if client._proc is None:
-            print(f"[MCP] Fed First Blood to start server '{name}': {getattr(client, '_error', '?')}")
+            print(f"[MCP] Failed to start server '{name}': {getattr(client, '_error', '?')}")
             continue
         try:
             client.initialize()
             server_tools = client.list_tools()
         except Exception as e:
-            print(f"[MCP] Server '{name}' init Fed First Blood: {e}")
+            print(f"[MCP] Server '{name}' init failed: {e}")
             continue
         _MCP_CLIENTS.append(client)
         for t in server_tools:
@@ -701,7 +725,7 @@ class AgentMemory:
     @property
     def status(self) -> str:
         if self.error:
-            return f"JSONL disabled ({self.Raid Wipe})"
+            return f"JSONL disabled ({self.error})"
         return f"JSONL local ({self.path})"
 
 # ============================================================
@@ -721,7 +745,7 @@ class CircuitBreaker:
             if time.time() - self.last_failure_time > self.reset_timeout:
                 self.state = "HALF_OPEN"
             else:
-                return "⚠️ Circuit breaker is OPEN. Companion(s) is cooling down after repeated failures."
+                return "⚠️ Circuit breaker is OPEN. Agent is cooling down after repeated failures."
 
         try:
             result = func(*args, **kwargs)
@@ -733,7 +757,7 @@ class CircuitBreaker:
             self.last_failure_time = time.time()
             if self.failures >= self.max_failures:
                 self.state = "OPEN"
-            return f"❌ Raid Wipe (attempt {self.failures}/{self.max_failures}): {str(e)}"
+            return f"❌ Error (attempt {self.failures}/{self.max_failures}): {str(e)}"
 
 # ============================================================
 # 🤖 THE ADVANCED QWEN3.7 PLUS AGENT
@@ -748,6 +772,7 @@ class QwenAgent:
         self.circuit_breaker = CircuitBreaker(max_failures=3)
 
         # Initialize via dynamic provider
+        _load_heavy_agent_libs()
         self.llm = ChatOpenAI(
             model=model_name,
             api_key=api_key,
@@ -895,7 +920,7 @@ If no tool is needed, respond directly."""
                         try:
                             tool_output = all_tools_map[action].invoke(action_input)
                         except Exception as ex:
-                            tool_output = f"Tool execution Raid Wipe for {action}: {ex}"
+                            tool_output = f"Tool execution error for {action}: {ex}"
                     elif action in ("get_current_time", "current_time", "time", "date"):
                         tool_output = f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                     elif action == "read_file":
@@ -917,7 +942,7 @@ If no tool is needed, respond directly."""
         return text
 
     def run(self, user_input: str, context_files: list = None, include_mcp: bool = True, include_skills: bool = True, include_core: bool = True, deepsearch_enabled: bool = False) -> str:
-        """Execute a user request through the Companion(s) with full tool access."""
+        """Execute a user request through the agent with full tool access."""
 
         # Build enriched prompt with memory + context
         memories = self.memory.recall(user_input, n_results=2)
@@ -999,7 +1024,7 @@ If no tool is needed, respond directly."""
             # Store important interactions in memory
             if self.memory_enabled and len(user_input) > 20:
                 self.memory.remember(
-                    f"User asked: {user_input[:100]} | Companion(s) responded with {len(response_text)} chars",
+                    f"User asked: {user_input[:100]} | Agent responded with {len(response_text)} chars",
                     category="interaction"
                 )
 
@@ -1033,13 +1058,13 @@ class ChatInput(Input):
         if event.text and ("\n" in event.text or len(event.text) > 80):
             self.app.pasted_attachment = event.text
             self.placeholder = f"📋 [Attached: {len(event.text)} chars] Type your prompt and press Enter..."
-            log = self.app.query_one("#Companion(s)-log", AgentLog)
+            log = self.app.query_one("#agent-log", AgentLog)
             log.write(f"[bold yellow]📋 Text Block Attached ({len(event.text)} chars). Press Enter to send.[/bold yellow]")
             event.stop()
             event.prevent_default()
 
     def on_key(self, event: Key) -> None:
-        if event.key == "alt+shift+v":
+        if event.key == "alt+v":
             self.app.action_paste_clipboard()
             event.stop()
             event.prevent_default()
@@ -1092,7 +1117,7 @@ class AgentLog(RichLog):
                             word = m.group(0)
                             try:
                                 pyperclip.copy(word)
-                                log = self.app.query_one("#Companion(s)-log", AgentLog)
+                                log = self.app.query_one("#agent-log", AgentLog)
                                 log.write(f"[cyan]📋 Copied word:[/cyan] [bold white]{word}[/bold white]")
                             except Exception:
                                 pass
@@ -1136,7 +1161,7 @@ class AgentLog(RichLog):
                         disp = selected_text.replace("\n", " ")
                         if len(disp) > 40:
                             disp = disp[:40] + "..."
-                        log = self.app.query_one("#Companion(s)-log", AgentLog)
+                        log = self.app.query_one("#agent-log", AgentLog)
                         log.write(f"[cyan]📋 Copied selection:[/cyan] [bold white]{disp}[/bold white]")
                     except Exception:
                         pass
@@ -1245,8 +1270,8 @@ FREE_MODEL_ORDER = [
 def is_retryable_model_error(message: str) -> bool:
     return bool(message and any(term in message.lower() for term in (
         "429", "rate limit", "quota", "credits", "license", "permission-denied",
-        "unavailable", "connection Raid Wipe", "timeout", "insufficient", "billing",
-        "model_not_found", "Pokemon not found", "not found", "404", "401", "403",
+        "unavailable", "connection error", "timeout", "insufficient", "billing",
+        "model_not_found", "model not found", "not found", "404", "401", "403",
         "do not support tools", "does not support tools", "not support tools",
         "invalid_request_error", "400"
     )))
@@ -1260,14 +1285,14 @@ def _first_env(*names: str) -> str:
     return ""
 
 
-OLLAMA_MODEL_CACHE = {"time": 0.0, "Pokemon": set()}
+OLLAMA_MODEL_CACHE = {"time": 0.0, "models": set()}
 ENDPOINT_HEALTH_CACHE = {}
 
 
 def _ollama_installed_models() -> set[str]:
     now = time.monotonic()
     if now - OLLAMA_MODEL_CACHE["time"] < 15.0:
-        return set(OLLAMA_MODEL_CACHE["Pokemon"])
+        return set(OLLAMA_MODEL_CACHE["models"])
 
     models: set[str] = set()
     try:
@@ -1275,14 +1300,14 @@ def _ollama_installed_models() -> set[str]:
 
         with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=0.7) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        for item in payload.get("Pokemon", []):
+        for item in payload.get("models", []):
             name = str(item.get("name", "")).strip()
             if name:
                 models.add(name)
     except Exception:
         models = set()
 
-    OLLAMA_MODEL_CACHE.update({"time": now, "Pokemon": models})
+    OLLAMA_MODEL_CACHE.update({"time": now, "models": models})
     return models
 
 
@@ -1320,7 +1345,7 @@ def is_model_id_configured(model_id: str) -> bool:
     if model_id.startswith("blockrun/"):
         return True
     if model_id.startswith("claw/"):
-        return _endpoint_available("http://127.0.0.1:8402/v1/Pokemon")
+        return _endpoint_available("http://127.0.0.1:8402/v1/models")
     if model_id.startswith("gemini/"):
         return bool(_first_env("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     if model_id.startswith("mistral/"):
@@ -1346,7 +1371,7 @@ def resolve_model_config(selected_id: str | None = None) -> dict:
     if selected_id == "auto/free":
         for model_id in configured_free_model_ids():
             return resolve_model_config(model_id)
-        raise ValueError("No free/no-key gateway, configured free-tier key, ClawRouter proxy, or installed local Ollama Pokemon found.")
+        raise ValueError("No free/no-key gateway, configured free-tier key, ClawRouter proxy, or installed local Ollama model found.")
 
     if selected_id == "kilo-auto/free" or selected_id.startswith("kilo/"):
         model_name = selected_id if selected_id == "kilo-auto/free" else selected_id.replace("kilo/", "", 1)
@@ -1366,7 +1391,7 @@ def resolve_model_config(selected_id: str | None = None) -> dict:
         }
 
     if selected_id.startswith("claw/"):
-        if not _endpoint_available("http://127.0.0.1:8402/v1/Pokemon"):
+        if not _endpoint_available("http://127.0.0.1:8402/v1/models"):
             raise ValueError("Start ClawRouter first: npx -y @blockrun/clawrouter")
         return {
             "api_key": "x402",
@@ -1406,7 +1431,7 @@ def resolve_model_config(selected_id: str | None = None) -> dict:
             "api_key": api_key,
             "base_url": "https://openrouter.ai/api/v1",
             "model_name": model_name,
-            "provider": "OpenRouter free Pokemon",
+            "provider": "OpenRouter free models",
         }
 
     if selected_id.startswith("groq/"):
@@ -1456,7 +1481,7 @@ def resolve_model_config(selected_id: str | None = None) -> dict:
     if selected_id.startswith("ollama/"):
         model_name = selected_id.replace("ollama/", "")
         if not _ollama_model_available(model_name):
-            raise ValueError(f"Ollama Pokemon is not installed or Ollama is offline: {model_name}")
+            raise ValueError(f"Ollama model is not installed or Ollama is offline: {model_name}")
         return {
             "api_key": "ollama",
             "base_url": "http://127.0.0.1:11434/v1",
@@ -1464,7 +1489,7 @@ def resolve_model_config(selected_id: str | None = None) -> dict:
             "provider": "Local Ollama",
         }
 
-    raise ValueError(f"Unknown Pokemon selection: {selected_id}")
+    raise ValueError(f"Unknown model selection: {selected_id}")
 
 
 def configured_free_model_ids(preferred: str | None = None) -> list[str]:
@@ -1649,7 +1674,7 @@ class ExplorerCLI(App):
         Binding("ctrl+f", "go_forward", "Forward", show=False),
         Binding("ctrl+o", "open_file", "Open", show=False),
         Binding("ctrl+c", "copy_log", "Copy", show=False),
-        Binding("alt+shift+v", "paste_clipboard", "Paste Clipboard", show=False),
+        Binding("alt+v", "paste_clipboard", "Paste Clipboard", show=False),
         Binding("escape", "handle_esc", "ESC Nudge/Abort", show=True),
         Binding("ctrl+q", "quit", "Quit", show=False),
     ]
@@ -1729,22 +1754,22 @@ class ExplorerCLI(App):
 
             with Vertical(id="right-pane"):
                 yield Static(
-                    "🤖 Explorer Companion(s) | Pokemon: Auto Cloud/Local | LangGraph | MCP Tools | JSONL Memory",
-                    id="Companion(s)-header"
+                    "🤖 Explorer Agent | Model: Auto Cloud/Local | LangGraph | MCP Tools | JSONL Memory",
+                    id="agent-header"
                 )
                 yield Select(
                     configured_free_model_options(),
-                    id="Pokemon-select",
-                    prompt="Select a Free / Local Pokemon..."
+                    id="model-select",
+                    prompt="Select a Free / Local Model..."
                 )
-                with Horizontal(id="Companion(s)-controls"):
+                with Horizontal(id="agent-controls"):
                     yield Button("🔎 Deep", id="btn-deepsearch", variant="default")
                     yield Select(
                         [
                             ("💬 Chat", "chat"),
                             ("🐢 Plan", "plan"),
                             ("🔍 Rev", "review"),
-                            ("🤖 Companion(s)", "Companion(s)"),
+                            ("🤖 Agent", "agent"),
                         ],
                         id="mode-select",
                         value="chat",
@@ -1772,7 +1797,7 @@ class ExplorerCLI(App):
                     yield Button("⚙️ Core", id="btn-core", variant="primary")
                     yield Button("🧠 Mem", id="btn-memorise", variant="primary")
                     yield Button("✅ Auto", id="btn-auto-approval", variant="default")
-                yield AgentLog(id="Companion(s)-log", wrap=True, highlight=True, markup=True)
+                yield AgentLog(id="agent-log", wrap=True, highlight=True, markup=True)
                 
                 # PIKA POKE COMPANION UI BLOCK
                 yield Static("────────────────────────────────────────────────────────────────────────────────────────────────────────", classes="pika-sep")
@@ -1781,8 +1806,8 @@ class ExplorerCLI(App):
                     classes="pika-bar",
                     id="pika-bar"
                 )
-                yield Static("💡 Tip: Alt+Shift+V or right-click input attaches clipboard. Left-drag selects; right-click chat copies log.", classes="pika-sep")
-                yield Static("⚡ Commands: /help · /clear · /files · /Pokemon · /gpu · /pika · /archon · /tools · /mcp · /skills · /reload", classes="pika-sep")
+                yield Static("💡 Tip: Alt+V or right-click input attaches clipboard. Left-drag selects; right-click chat copies log.", classes="pika-sep")
+                yield Static("⚡ Commands: /help · /clear · /files · /model · /gpu · /pika · /archon · /tools · /mcp · /skills · /reload", classes="pika-sep")
                 yield ChatInput(
                     placeholder="> ",
                     id="chat-input"
@@ -1796,21 +1821,21 @@ class ExplorerCLI(App):
 
     def action_handle_esc(self) -> None:
         now = time.time()
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         if now - getattr(self, "_last_esc_time", 0.0) < 1.5:
             if getattr(self, "busy", False):
                 self.busy = False
-                log.write("\n[bold red]⛔ Companion(s) OPERATION ABORTED BY ESC x2![/bold red]")
+                log.write("\n[bold red]⛔ AGENT OPERATION ABORTED BY ESC x2![/bold red]")
                 self.set_agent_status("ABORT")
             else:
-                log.write("\n[bold red]⛔ Abort triggered (Companion(s) was idle).[/bold red]")
+                log.write("\n[bold red]⛔ Abort triggered (agent was idle).[/bold red]")
             self._last_esc_time = 0.0
         else:
             self._last_esc_time = now
             if getattr(self, "busy", False):
-                log.write("\n[bold yellow]⚡ ESC Slap! Nudging Companion(s)... (Press ESC again within 1.5s to abort)[/bold yellow]")
+                log.write("\n[bold yellow]⚡ ESC Slap! Nudging agent... (Press ESC again within 1.5s to abort)[/bold yellow]")
             else:
-                log.write("\n[bold yellow]⚡ ESC Slap! Companion(s) is ready. (Press ESC twice to abort)[/bold yellow]")
+                log.write("\n[bold yellow]⚡ ESC Slap! Agent is ready. (Press ESC twice to abort)[/bold yellow]")
 
     def _apply_model_config(self, model_id: str, model_config: dict, agent: QwenAgent) -> None:
         self.agent = agent
@@ -1838,11 +1863,11 @@ class ExplorerCLI(App):
         elif self.thinking_level == "high":
             directives.append("Thinking mode: [x10think / /x10think] Deep reasoning. Write an exhaustive, multi-step <thinking> block questioning assumptions, conducting at least 10 planning steps, and evaluating multiple counterfactuals before answering.")
         if self.mode == "plan":
-            directives.append("You are acting as PIKA TURTLE, the 2nd Tactician Companion. Your responsibility is to prepare a detailed tactical action plan and mind-map the user request into logical bullet points. Suggest highly efficient shortcuts and magic spells to complete the Quest with minimal resource usage. Focus on high-level strategy and planning. Do NOT execute modification tools yet.")
+            directives.append("You are acting as PIKA TURTLE, the 2nd Tactician Companion. Your responsibility is to prepare a detailed tactical action plan and mind-map the user request into logical bullet points. Suggest highly efficient shortcuts and magic spells to complete the task with minimal resource usage. Focus on high-level strategy and planning. Do NOT execute modification tools yet.")
         elif self.mode == "review":
             directives.append("Review mode: analyze code and report findings, do NOT modify anything.")
-        elif self.mode == "Companion(s)":
-            directives.append("Companion(s) mode: use tools automatically to complete the Quest end-to-end.")
+        elif self.mode == "agent":
+            directives.append("Agent mode: use tools automatically to complete the task end-to-end.")
         else:
             directives.append("Chat mode: answer directly; use tools only if needed.")
         if self.deepsearch_enabled:
@@ -1928,7 +1953,7 @@ class ExplorerCLI(App):
         return price
 
     def _safe_fetch_json(self, url: str):
-        request = Request(url, headers={"User-Companion(s)": "Mozilla/5.0 (NME Explorer)"})
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0 (NME Explorer)"})
         with urlopen(request, timeout=6) as response:
             return json.loads(response.read().decode("utf-8"))
 
@@ -2013,10 +2038,10 @@ class ExplorerCLI(App):
         art = [
             "   [bright_cyan]  _____  [/bright_cyan]",
             "  [bright_cyan]/  [bold white]o[/bold white]   [bold white]o[/bold white] \\ [/bright_cyan]  [bold cyan]PIKA SQUIRTLE[/bold cyan]",
-            " [bright_cyan](   [yellow]___[/yellow]   )[/bright_cyan] [dim]Invoker archon[/dim]",
+            " [bright_cyan](   [yellow]___[/yellow]   )[/bright_cyan] [dim]hacker archon[/dim]",
             "  [bright_cyan]\\  [yellow]\\_/[/yellow]  /[/bright_cyan]  [bright_blue]orbs[/bright_blue] " + orb_row,
             " [yellow]/  /[/yellow][cyan]___[/cyan][yellow]\\  \\[/yellow] [green]shell[/green] online",
-            "[yellow]/__( [cyan](_) [/cyan] )__\\[/yellow] [yellow]Pokemon[/yellow] " + model_short,
+            "[yellow]/__( [cyan](_) [/cyan] )__\\[/yellow] [yellow]model[/yellow] " + model_short,
         ]
         return "\n".join(art)
 
@@ -2032,8 +2057,8 @@ class ExplorerCLI(App):
         rows = ["[bold cyan]TASKER[/bold cyan] [dim]project timeline[/dim]"]
         for task in self.timeline_tasks[:6]:
             status = task.get("status", "todo")
-            note = f" › {Quest.get('note')}" if task.get("note") else ""
-            rows.append(f"{icon.get(status, '□')} {Quest.get('label')}{note}")
+            note = f" › {task.get('note')}" if task.get("note") else ""
+            rows.append(f"{icon.get(status, '□')} {task.get('label')}{note}")
         rows.append(f"[green]+ {done} completed[/]  [yellow]{total - done} open[/]  [dim]status {self.agent_status}[/]")
         return "\n".join(rows)
     def update_game_hud(self) -> None:
@@ -2086,34 +2111,34 @@ class ExplorerCLI(App):
             f"{render_gpu_meter('GPU', gpu, gpu_source, self.gpu_history)}\n"
             f"{render_heartbeat(current_bpm, int(now), self.rsi_history)}\n"
             f"[magenta]CAPTURE ORBS[/magenta] {orb_row}\n"
-            f"[dim]Pokemon[/dim] {self.current_model_label}"
+            f"[dim]model[/dim] {self.current_model_label}"
         )
         pokes_panel.update(self.render_pokes_panel())
         tasker_panel.update(self.render_tasker_panel())
 
     def show_resume_board(self) -> None:
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         model_lines = "\n".join(f"- {label}: {value}" for label, value in configured_free_model_options())
         injected = "\n".join(f"- {Path(path).name}: {path}" for path in self.agent_context_files[-8:]) or "- none"
-        memory = "No Companion(s) memory loaded yet."
+        memory = "No agent memory loaded yet."
         if self.agent:
-            memory = self.agent.memory.recall("resume Companion(s) Pokemon titles briefs NME explorer noted action plan", n_results=5)
+            memory = self.agent.memory.recall("resume agent models titles briefs NME explorer noted action plan", n_results=5)
         log.write(
             "[bold cyan]🧭 NME RESUME BOARD[/bold cyan]\n"
             f"[bold]Workspace:[/bold] {self.current_path}\n"
-            f"[bold]Current Pokemon:[/bold] {self.current_model_label}\n"
-            f"[bold]Companion(s) status:[/bold] {self.agent_status}\n"
+            f"[bold]Current model:[/bold] {self.current_model_label}\n"
+            f"[bold]Agent status:[/bold] {self.agent_status}\n"
             f"[bold]Quest squares:[/bold] {self._quest_line()}\n\n"
-            f"[bold yellow]Pokemon[/bold yellow]\n{model_lines}\n\n"
+            f"[bold yellow]Models[/bold yellow]\n{model_lines}\n\n"
             f"[bold yellow]Injected context[/bold yellow]\n{injected}\n\n"
             f"[bold yellow]NME noted[/bold yellow]\n{memory}"
         )
         play_sfx("resume")
 
     def show_blockrun_board(self) -> None:
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         configured = "yes" if any(model_id.startswith("blockrun/") for model_id in configured_free_model_ids()) else "no"
-        claw = "online" if _endpoint_available("http://127.0.0.1:8402/v1/Pokemon") else "offline"
+        claw = "online" if _endpoint_available("http://127.0.0.1:8402/v1/models") else "offline"
         message = f"""[bold cyan]BLOCKRUN INTEGRATION[/bold cyan]
 [bold]NME direct free route:[/bold] {configured}
 [bold]ClawRouter proxy:[/bold] {claw}
@@ -2146,7 +2171,7 @@ class ExplorerCLI(App):
         self.update_game_hud()
     # --- UI Handlers ---
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         if event.button.id == "btn-up":
             self.action_go_up()
         elif event.button.id == "btn-back":
@@ -2208,7 +2233,7 @@ class ExplorerCLI(App):
 
     def action_copy_log(self):
         try:
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             text_lines = [line.text for line in log.lines]
             pyperclip.copy("\n".join(text_lines))
             # Just visually notify they copied it
@@ -2218,7 +2243,7 @@ class ExplorerCLI(App):
             pass
 
     def action_paste_clipboard(self):
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         payload = describe_clipboard_payload()
         if not payload["has_payload"]:
             log.write("[bold yellow]📋 Clipboard has no text, files, or image to attach.[/bold yellow]")
@@ -2257,7 +2282,7 @@ class ExplorerCLI(App):
         except: pass
 
     def inject_file_to_agent(self, file_path: Path):
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
         try:
             content = file_path.read_text(encoding="utf-8")
             if str(file_path) not in self.agent_context_files:
@@ -2276,10 +2301,10 @@ class ExplorerCLI(App):
             new_path = Path(event.value.strip()).resolve()
             if new_path.is_dir():
                 self.navigate_to_path(new_path)
-                log = self.query_one("#Companion(s)-log", AgentLog)
+                log = self.query_one("#agent-log", AgentLog)
                 log.write(f"[bold green]📂 Directory changed to:[/bold green] {new_path}")
             else:
-                log = self.query_one("#Companion(s)-log", AgentLog)
+                log = self.query_one("#agent-log", AgentLog)
                 log.write(f"[bold red]❌ Invalid directory:[/bold red] {new_path}")
                 event.input.value = str(self.current_path)
             return
@@ -2287,14 +2312,14 @@ class ExplorerCLI(App):
         if event.input.id == "chat-input":
             user_prompt = event.value.strip()
             
-            if user_prompt.lower() == "/Pokemon":
+            if user_prompt.lower() == "/models":
                 event.input.value = ""
-                select = self.query_one("#Pokemon-select", Select)
+                select = self.query_one("#model-select", Select)
                 select.styles.display = "block"
                 select.focus()
-                log = self.query_one("#Companion(s)-log", AgentLog)
-                log.write("[bold yellow]🔄 Please select a Pokemon from the dropdown above.[/bold yellow]")
-                play_sfx("Pokemon")
+                log = self.query_one("#agent-log", AgentLog)
+                log.write("[bold yellow]🔄 Please select a model from the dropdown above.[/bold yellow]")
+                play_sfx("model")
                 return
 
             if user_prompt.lower() in ("/resume", "resume"):
@@ -2315,12 +2340,12 @@ class ExplorerCLI(App):
             if not user_prompt:
                 return
 
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             log.write(f"\n[bold blue]👤 You:[/bold blue] {user_prompt}")
             event.input.value = ""
 
         if not AGENT_AVAILABLE:
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             log.write(f"[bold red]❌ Missing dependency:[/bold red] {IMPORT_ERROR}")
             return
 
@@ -2328,13 +2353,13 @@ class ExplorerCLI(App):
 
     @work(exclusive=True, thread=True)
     def run_agent_worker(self, user_prompt: str) -> None:
-        log = self.query_one("#Companion(s)-log", AgentLog)
+        log = self.query_one("#agent-log", AgentLog)
 
         def write_log(text: str):
             log.write(text)
 
         self.call_from_thread(self.set_agent_status, "THINK")
-        self.call_from_thread(write_log, "[yellow]⠋ NME is thinking with free/local Pokemon failover...[/yellow]")
+        self.call_from_thread(write_log, "[yellow]⠋ NME is thinking with free/local model failover...[/yellow]")
 
         attempted = set()
         fallback_configs = available_free_model_configs(self.current_model_id)
@@ -2366,10 +2391,10 @@ class ExplorerCLI(App):
                 )
                 last_response = response
                 if is_retryable_model_error(response):
-                    self.call_from_thread(write_log, f"[yellow]↻ Pokemon unavailable/limited, trying next free candidate:[/yellow] {model_id}")
+                    self.call_from_thread(write_log, f"[yellow]↻ Model unavailable/limited, trying next free candidate:[/yellow] {model_id}")
                     continue
 
-                self.call_from_thread(write_log, f"\n[bold magenta]🤖 NME Companion(s):[/bold magenta]\n{response}")
+                self.call_from_thread(write_log, f"\n[bold magenta]🤖 NME Agent:[/bold magenta]\n{response}")
                 self.call_from_thread(self.set_agent_status, "READY")
                 self.call_from_thread(play_sfx, "victory")
                 return
@@ -2377,22 +2402,22 @@ class ExplorerCLI(App):
                 message = str(e)
                 last_response = message
                 if is_retryable_model_error(message):
-                    self.call_from_thread(write_log, f"[yellow]↻ Pokemon unavailable/limited, trying next free candidate:[/yellow] {model_id}")
+                    self.call_from_thread(write_log, f"[yellow]↻ Model unavailable/limited, trying next free candidate:[/yellow] {model_id}")
                     continue
-                self.call_from_thread(write_log, f"[bold red]❌ Companion(s) Raid Wipe:[/bold red] {message}")
+                self.call_from_thread(write_log, f"[bold red]❌ Agent Error:[/bold red] {message}")
                 self.call_from_thread(self.set_agent_status, "ERR")
-                self.call_from_thread(play_sfx, "Raid Wipe")
+                self.call_from_thread(play_sfx, "error")
                 return
 
-        self.call_from_thread(write_log, "[bold yellow]All configured free/local Pokemon are unavailable right now. NME stayed free-only; add another free key or start Ollama.[/bold yellow]")
+        self.call_from_thread(write_log, "[bold yellow]All configured free/local models are unavailable right now. NME stayed free-only; add another free key or start Ollama.[/bold yellow]")
         self.call_from_thread(self.set_agent_status, "ERR")
-        self.call_from_thread(play_sfx, "Raid Wipe")
+        self.call_from_thread(play_sfx, "error")
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """Handle Pokemon, thinking-level, mode, and theme switching from dropdowns."""
+        """Handle model, thinking-level, mode, and theme switching from dropdowns."""
         if event.select.id == "mode-select" and event.value:
             self.mode = str(event.value)
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             log.write(f"[cyan]Workflow Mode:[/cyan] {self.mode.upper()}")
             play_sfx("tap")
             return
@@ -2403,34 +2428,34 @@ class ExplorerCLI(App):
                 self.screen.remove_class(t)
             if theme_name != "cyber-aqua":
                 self.screen.add_class(f"theme-{theme_name}")
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             log.write(f"[cyan]🎨 Theme switched to:[/cyan] {theme_name.replace('-', ' ').title()}")
             play_sfx("tap")
             return
 
         if event.select.id == "thinking-select" and event.value:
             self.thinking_level = str(event.value)
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             log.write(f"[cyan]Thinking:[/cyan] {self.thinking_level}")
             self.update_agent_controls()
             play_sfx("tap")
             return
 
-        if event.select.id == "Pokemon-select" and event.value:
+        if event.select.id == "model-select" and event.value:
             selected_id = str(event.value)
             event.select.styles.display = "none"
             self.query_one("#chat-input", Input).focus()
             
-            log = self.query_one("#Companion(s)-log", AgentLog)
-            log.write(f"[yellow]⚡ Switching Pokemon to: {selected_id}...[/yellow]")
-            play_sfx("Pokemon")
+            log = self.query_one("#agent-log", AgentLog)
+            log.write(f"[yellow]⚡ Switching model to: {selected_id}...[/yellow]")
+            play_sfx("model")
             
             configs = []
             try:
                 configs = [(selected_id, resolve_model_config(selected_id))]
             except ValueError:
                 configs = available_free_model_configs("auto/free")
-                log.write("[yellow]Selected free Pokemon is not configured here; trying the next configured free/local candidate.[/yellow]")
+                log.write("[yellow]Selected free model is not configured here; trying the next configured free/local candidate.[/yellow]")
 
             for model_id, model_config in configs:
                 try:
@@ -2441,23 +2466,23 @@ class ExplorerCLI(App):
                         model_name=model_config["model_name"]
                     )
                     self._apply_model_config(model_id, model_config, agent)
-                    log.write(f"[bold green]✅ Companion(s) switched to {model_config['provider']} ({model_config['model_name']})![/bold green]")
-                    log.write(f"[bold green]✅ Memory:[/bold green] {self.Companion(s).memory.status}")
+                    log.write(f"[bold green]✅ Agent switched to {model_config['provider']} ({model_config['model_name']})![/bold green]")
+                    log.write(f"[bold green]✅ Memory:[/bold green] {self.agent.memory.status}")
                     self.set_agent_status("READY")
                     play_sfx("victory")
                     break
                 except Exception as e:
                     if is_retryable_model_error(str(e)):
-                        log.write(f"[yellow]↻ Free Pokemon unavailable, trying next:[/yellow] {model_id}")
+                        log.write(f"[yellow]↻ Free model unavailable, trying next:[/yellow] {model_id}")
                         continue
-                    log.write(f"[bold red]❌ Fed First Blood to switch Pokemon:[/bold red] {str(e)}")
+                    log.write(f"[bold red]❌ Failed to switch model:[/bold red] {str(e)}")
                     self.set_agent_status("ERR")
-                    play_sfx("Raid Wipe")
+                    play_sfx("error")
                     break
             else:
-                log.write("[bold yellow]No configured free/local Pokemon is available right now.[/bold yellow]")
+                log.write("[bold yellow]No configured free/local model is available right now.[/bold yellow]")
                 self.set_agent_status("ERR")
-                play_sfx("Raid Wipe")
+                play_sfx("error")
 
 def main():
     app = ExplorerCLI()

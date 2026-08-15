@@ -8,5 +8,6 @@ workspace/
 .secrets.enc
 venv/
 *.bak
-
 config.yaml
+history.json
+tool_call_stats.json

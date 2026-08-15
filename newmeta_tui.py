@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Header, Footer, Static, Input, RichLog, Button, Select, OptionList, TabbedContent, TabPane
+from textual.widgets import Header, Footer, Static, Input, RichLog, Button, Select, OptionList, TabbedContent, TabPane, DataTable
 from textual.widgets.option_list import Option
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.binding import Binding
 from textual import work
 from textual.events import Key, MouseDown, MouseUp, MouseScrollUp, MouseScrollDown, Paste
@@ -93,7 +93,7 @@ MCP_SERVER_SECTION = {
 # reliably, and this is exactly the kind of result (a generated file path)
 # that's useless if it gets lost.
 SLOW_TOOL_MESSAGES = {
-    "mephissa_karaoke_make": "🎧 [Mephissa] hold on, cooking... separating vocals, transcribing, rendering the karaoke video — first run also downloads Pokemon weights, this can take several minutes.",
+    "mephissa_karaoke_make": "🎧 [Mephissa] hold on, cooking... separating vocals, transcribing, rendering the karaoke video — first run also downloads model weights, this can take several minutes.",
     "mephissa_record_start": "🎙️ [Mephissa] starting the recording now.",
 }
 
@@ -225,7 +225,7 @@ def award_pika_xp(amount: int, reason: str = "") -> dict | None:
         new_xp = max(0, new_xp)
 
         def _replace_rank(m):
-            return f"`Current Rank`: `Lv.{level} Invoker Archon (Progressing to Lv.{min(level + 1, 100)})`"
+            return f"`Current Rank`: `Lv.{level} Hacker Archon (Progressing to Lv.{min(level + 1, 100)})`"
 
         def _replace_xp(m):
             return f"`XP`: `{new_xp}/{max_xp} XP` (Max Cap: `Lv.100`)"
@@ -253,7 +253,7 @@ def render_pika_bar(ctx_pct: int = 22, active_agents: int = 1) -> str:
     pct = int((xp / max_xp) * 10) if max_xp else 5
     bar_str = "#" * pct + "-" * (10 - pct)
     tot_saved = live.get("saved_tokens_total") or stats.get("saved_tokens_total", "106.0k")
-    agent_str = f"⚡ {active_agents} Companion(s)" if active_agents == 1 else f"⚡ {active_agents} Companion(s)"
+    agent_str = f"⚡ {active_agents} Agent" if active_agents == 1 else f"⚡ {active_agents} Agents"
     return (
         f"PIKA POKE [Lv.{lvl}] [{bar_str}] {xp}/{max_xp} XP | "
         f"🛡️ {tot_saved} Saved | ctx: {ctx_pct}% | {agent_str}"
@@ -384,7 +384,7 @@ def get_pikapoke_stats() -> dict:
     # (would silently show Lv.1/0 XP even while the real tracker is Lv.4+).
     md_stats = get_pika_md_stats()
     if md_stats is not None:
-        return dict(md_stats, name="Pika Poke", stage="Invoker Archon", stage_emoji="🐭")
+        return dict(md_stats, name="Pika Poke", stage="Hacker Archon", stage_emoji="🐭")
     if _PIKAPOKE_MOD is None:
         return dict(_COMPANION_FALLBACK, name="Pika Poke")
     try:
@@ -568,8 +568,8 @@ class TuiInput(Input):
             event.prevent_default()
 
     def on_key(self, event: Key) -> None:
-        if event.key == "alt+shift+v":
-            self.app.action_paste_clipboard()
+        if event.key == "alt+V":
+            self.app.action_rikimaru_vanish()
             event.stop()
             event.prevent_default()
 
@@ -695,7 +695,7 @@ class NeonFooter(Horizontal):
     """
 
     _KEY_DISPLAY = {
-        "alt+shift+v": "Alt+Shift+V", "escape": "Esc", "f5": "F5", "f6": "F6", "f7": "F7",
+        "alt+V": "Alt+Shift+V", "escape": "Esc", "f5": "F5", "f6": "F6", "f7": "F7",
         "f8": "F8", "f9": "F9", "f10": "F10", "ctrl+up": "Ctrl+↑",
         "ctrl+down": "Ctrl+↓", "tab": "Tab", "ctrl+p": "Ctrl+P",
     }
@@ -823,8 +823,8 @@ class ModelPickerScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="picker-box"):
-            yield Static("🚀 Launch Companion(s)  —  type to filter, Enter to launch, Esc to cancel", id="picker-title")
-            yield Input(placeholder="Filter Companion(s)...", id="picker-search")
+            yield Static("🚀 Launch Agent  —  type to filter, Enter to launch, Esc to cancel", id="picker-title")
+            yield Input(placeholder="Filter agents...", id="picker-search")
             yield OptionList(id="picker-list")
             yield Static("", id="picker-hint")
 
@@ -850,7 +850,7 @@ class ModelPickerScreen(ModalScreen[str]):
             option_list.add_option(Option(label, id=value, disabled=is_header))
             if not is_header:
                 shown += 1
-        self.query_one("#picker-hint", Static).update(f"{shown} Companion(s)(s)")
+        self.query_one("#picker-hint", Static).update(f"{shown} agent(s)")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "picker-search":
@@ -1058,7 +1058,7 @@ class JoystickScreen(ModalScreen[None]):
         ("Alt+W", "BloodSeeker (PikaPoke)"),
         ("Alt+E", "Phantom Strike (PikaPoke)"),
         ("Alt+R", "Archon Tether (PikaPoke)"),
-        ("Alt+Shift+V", "Zoro Rikimaru Vanish (PikaPoke)"),
+        ("alt+V", "Zoro Rikimaru Vanish (PikaPoke)"),
         ("Alt+D", "Dr. Vision (PikaPoke)"),
         ("Alt+L", "Learn from clipboard (PikaPoke)"),
         ("Ctrl+Alt+Shift+E", "Silencer Learn (PikaPoke)"),
@@ -1329,8 +1329,8 @@ class ModePickerScreen(ModalScreen[str]):
     additionalContext, Both does both at once. See companion_kit/emit.py."""
 
     MODES = [
-        ("outbound", "📤 Outbound", "print to terminal only — you see it, the Pokemon doesn't (today's default)"),
-        ("inbound", "📥 Inbound", "injected into the Pokemon's context via additionalContext — the Pokemon reads it too"),
+        ("outbound", "📤 Outbound", "print to terminal only — you see it, the model doesn't (today's default)"),
+        ("inbound", "📥 Inbound", "injected into the model's context via additionalContext — the model reads it too"),
         ("both", "🔁 Both", "printed to the terminal AND injected into context, at the same time"),
     ]
 
@@ -1849,6 +1849,17 @@ class NewMetaTui(App):
 
     /* Footer replaced by NeonFooter (own DEFAULT_CSS on the widget itself) -
        discrete bordered boxes, name-over-shortcut, outline-only hover. */
+
+    #companion-footer {
+        height: 1;
+        width: 100%;
+        background: #050505;
+        color: #F8F9FA;
+        border-top: heavy #38bdf8;
+        padding: 0 1;
+        text-style: bold;
+        content-align: left middle;
+    }
 
     /* CODING THEME (Full Dark Black + Neon Red) */
     Screen.theme-coding {
@@ -2436,7 +2447,8 @@ class NewMetaTui(App):
     """
 
     BINDINGS = [
-        Binding("alt+shift+v", "paste_clipboard", "📋 Paste/Attach", show=True),
+        Binding("alt+V", "rikimaru_vanish", "⚔️ Zoro Rikimaru Vanish", show=True, key_display="Alt+Shift+V"),
+        Binding("alt+v", "paste_clipboard", "📋 Paste/Attach", show=True, key_display="Alt+V"),
         Binding("escape", "handle_esc", "⛔ Nudge/Abort", show=True),
         Binding("f5", "dj_playpause", "▶ Play/Pause", show=True),
         Binding("f6", "dj_stop", "⏹ Stop", show=True),
@@ -2498,7 +2510,7 @@ class NewMetaTui(App):
         self.provider = None
         self.provider_label = "none"
         self.provider_key = None
-        self.mode = "Companion(s)"
+        self.mode = "agent"
 
         # Persistent multi-turn session (backs the /sessions picker).
         self.session_manager = cli.SessionManager(cli.SESSIONS_DIR)
@@ -2574,6 +2586,13 @@ class NewMetaTui(App):
         self.deepsearch_enabled = False
         self.zouzou_frenzy_enabled = False
         self.pikapoke_vault_enabled = False
+        # /switch (Coder <-> Mage Invoker), mirrored from the Antigravity-side
+        # command of the same name: Mage Invoker (default, matches prior
+        # always-on behavior) lets cast_macro() actually cast companion
+        # spells; Coder mode blocks it at that single choke point so every
+        # cast path (card row, pads, joystick, prompt-cycle) is gated the
+        # same way without touching each caller individually.
+        self.mage_invoker_enabled = True
         self._sync_auto_approval()
         self._start_price_fetcher()
         self._mcp_loaded = False
@@ -2589,7 +2608,7 @@ class NewMetaTui(App):
                 registered = cli.load_mcp_servers(self.config)
             except Exception as e:
                 registered = []
-                self.call_from_thread(self.log_line, f"[bold red]❌ MCP load Raid Wipe:[/bold red] {e}")
+                self.call_from_thread(self.log_line, f"[bold red]❌ MCP load error:[/bold red] {e}")
             self._mcp_loaded = True
             if registered:
                 self.call_from_thread(self.log_line, f"[dim]🔌 MCP ready: {len(registered)} tool(s)[/dim]")
@@ -2607,7 +2626,7 @@ class NewMetaTui(App):
             last_btc = None
             while True:
                 try:
-                    req = urllib.request.Request("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", headers={"User-Companion(s)": "Mozilla/5.0"})
+                    req = urllib.request.Request("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", headers={"User-Agent": "Mozilla/5.0"})
                     with urllib.request.urlopen(req, timeout=5) as resp:
                         data = json.loads(resp.read().decode())
                         price = float(data.get("price", 97420))
@@ -2619,7 +2638,7 @@ class NewMetaTui(App):
                     pass
                 try:
                     # PAXG (tokenized gold) as a free, no-key live gold proxy
-                    req = urllib.request.Request("https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT", headers={"User-Companion(s)": "Mozilla/5.0"})
+                    req = urllib.request.Request("https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT", headers={"User-Agent": "Mozilla/5.0"})
                     with urllib.request.urlopen(req, timeout=5) as resp:
                         data = json.loads(resp.read().decode())
                         price = float(data.get("price", 0))
@@ -2805,6 +2824,25 @@ class NewMetaTui(App):
         card_id = {"turtle": "#card-turtle", "zouzou": "#mascot-zouzou"}.get(key, f"#card-{key}")
         self._live_feed(card_id, f"🔥 cast {name}")
 
+    def toggle_invoker_mode(self) -> None:
+        self.set_invoker_mode(not self.mage_invoker_enabled)
+
+    def set_invoker_mode(self, enabled: bool) -> None:
+        """/switch, /coder, /mage - mirrors the same Coder/Mage Invoker
+        toggle added on the Antigravity side. Doesn't touch each spell
+        trigger individually; cast_macro() is the one real choke point
+        every cast path (card row, pads, joystick, prompt-cycle) already
+        runs through, so gating there covers all of them at once."""
+        self.mage_invoker_enabled = bool(enabled)
+        if self.mage_invoker_enabled:
+            self.log_line("[#a78bfa]🪄 Mage Invoker mode ON - companion spells can be cast.[/#a78bfa]")
+        else:
+            self.log_line("[dim]💻 Coder mode ON - companion spells are off. /switch or /mage to re-enable.[/dim]")
+        self.set_status(
+            f"READY | {self.provider_label} | mode={self.mode} | "
+            f"invoker={'mage' if self.mage_invoker_enabled else 'coder'}"
+        )
+
     def cast_macro(self, key: str, action: str) -> None:
         """Real execution behind a JoystickScreen button press. Turtle/
         Mephisto route to their real existing actions; Zouzou's
@@ -2813,6 +2851,9 @@ class NewMetaTui(App):
         entry) goes through the same `python -m spellbook cast` the AHK
         hotkey layer already uses - identical XP/state either way, just a
         different button pressing it."""
+        if not self.mage_invoker_enabled:
+            self.log_line("[yellow]🪄 Spells are off in Coder mode - /switch to Mage Invoker to cast.[/yellow]")
+            return
         self.announce_cast(key, action)
         if key == "turtle" and action == "toggle":
             self.auto_approval_enabled = not self.auto_approval_enabled
@@ -2859,7 +2900,7 @@ class NewMetaTui(App):
                 subprocess.Popen([sys.executable, str(script)])
                 self.log_line(f"[#a8ab9f]🎯 Zouzou cast: {action}[/#a8ab9f]")
             except Exception as e:
-                self.log_line(f"[red]cast Fed First Blood: {e}[/red]")
+                self.log_line(f"[red]cast failed: {e}[/red]")
             return
         self._cast_spell_worker(key, action)
 
@@ -2877,12 +2918,12 @@ class NewMetaTui(App):
             )
             data = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
             color = JoystickScreen.COLORS.get(key, "#F8F9FA")
-            if "Raid Wipe" in data:
-                self.call_from_thread(self.log_line, f"[red]⚠ {data['Raid Wipe']}[/red]")
+            if "error" in data:
+                self.call_from_thread(self.log_line, f"[red]⚠ {data['error']}[/red]")
             else:
                 self.call_from_thread(self.log_line, f"[{color}]✨ {data.get('cast', action)} — power {data.get('total_power', '?')}, xp {data.get('xp', '?')}[/{color}]")
         except Exception as e:
-            self.call_from_thread(self.log_line, f"[red]cast Fed First Blood: {e}[/red]")
+            self.call_from_thread(self.log_line, f"[red]cast failed: {e}[/red]")
 
     def _sync_auto_approval(self) -> None:
         mutating = list(getattr(cli, "_MUTATING_TOOLS", {}).keys())
@@ -2911,8 +2952,8 @@ class NewMetaTui(App):
                 continue
             if name not in self._LOCAL_PROVIDER_KEYS:
                 continue
-            model = pconf.get("Pokemon") or ""
-            label = f"🤖 {name} / {Pokemon}" if model else f"🤖 {name}"
+            model = pconf.get("model") or ""
+            label = f"🤖 {name} / {model}" if model else f"🤖 {name}"
             opts.append((label, name))
         return opts
 
@@ -2925,10 +2966,10 @@ class NewMetaTui(App):
         category_icons = {
             "BUILT-IN CHAT PROVIDERS (Start NewMeta)": "💬",
             "FREE / LOCAL (no API cost)": "💻",
-            "NEWMETA AI Companion(s) (OpenClaw Specialists)": "🤖",
-            "THE Invoker ARCHON (PIKA POKE)": "🎭",
-            "UNRESTRICTED LOCAL Companion(s) (Zero Cost, No Limits)": "⚡",
-            "RAW LOCAL Pokemon (Ollama & Llama.cpp)": "🦙",
+            "NEWMETA AI AGENTS (OpenClaw Specialists)": "🤖",
+            "THE HACKER ARCHON (PIKA POKE)": "🎭",
+            "UNRESTRICTED LOCAL AGENTS (Zero Cost, No Limits)": "⚡",
+            "RAW LOCAL MODELS (Ollama & Llama.cpp)": "🦙",
             "FREE WEB / DESKTOP APPS (own quota)": "🌐",
             "FREE-TIER / BYO-KEYS CLI": "🔑",
             "PAY-PER-TOKEN API CLI": "💰",
@@ -2963,7 +3004,7 @@ class NewMetaTui(App):
         if value == SessionPickerScreen.NEW_SESSION_ID:
             self.session_id = self.session_manager.create(name="New session", provider="", system="")
             self.messages = []
-            self.query_one("#Companion(s)-log", AgentLog).clear()
+            self.query_one("#agent-log", AgentLog).clear()
             self.log_line("[bold #00F2FE]⚡ started new session[/bold #00F2FE]")
             return
         session = self.session_manager.load(value)
@@ -2972,7 +3013,7 @@ class NewMetaTui(App):
             return
         self.session_id = session["id"]
         self.messages = session.get("messages", [])
-        self.query_one("#Companion(s)-log", AgentLog).clear()
+        self.query_one("#agent-log", AgentLog).clear()
         for m in self.messages:
             role, content = m.get("role"), m.get("content") or ""
             if role == "user":
@@ -2990,7 +3031,7 @@ class NewMetaTui(App):
             return
         row = next((r for r in rows if str(r["id"]) == value), None)
         if not row:
-            self.log_line(f"[bold red]❌ Unknown Companion(s): {value}[/bold red]")
+            self.log_line(f"[bold red]❌ Unknown agent: {value}[/bold red]")
             return
         if row["type"] == "builtin":
             provider_aliases = {"pikapoke_ds": "deepseek", "pikapoke_meph": "mephissa"}
@@ -3012,7 +3053,7 @@ class NewMetaTui(App):
         self.log_line(f"[yellow]🚀 {row['name']} -> {cli._display_command(command)}[/yellow]")
         tag = self._TRAINER_TAGS.get(row.get("key"))
         if tag:
-            self.log_line(f"[dim]   ({tag} — external Raid Boss, no auto-XP until it has its own hook)[/dim]")
+            self.log_line(f"[dim]   ({tag} — external process, no auto-XP until it has its own hook)[/dim]")
         launch_mode = row.get("launch", "cli")
         cwd = row.get("cwd")
         try:
@@ -3025,7 +3066,7 @@ class NewMetaTui(App):
             else:
                 subprocess.Popen(command, cwd=cwd, shell=False, close_fds=True)
         except Exception as e:
-            self.log_line(f"[bold red]❌ launch Fed First Blood: {e}[/bold red]")
+            self.log_line(f"[bold red]❌ launch failed: {e}[/bold red]")
 
     def _macro_row(self, key: str, ultimate_emoji: str, ultimate_id: str, ultimate_label: str) -> ComposeResult:
         """Two rows per card: the 4 real spell hotkeys as their own boxed
@@ -3077,12 +3118,12 @@ class NewMetaTui(App):
             yield Button("🔥 BLAZE IT", id="btn-blaze-it", classes="knob-btn")
             yield Button("🌐 EN/AR", id="btn-dj-lang", classes="knob-btn")
             yield Button("🎓 LESSON", id="btn-dj-lesson", classes="knob-btn")
-            with Vertical(id="dj-vol-Companion(s)-zone"):
+            with Vertical(id="dj-vol-agent-zone"):
                 with Horizontal(id="dj-vol-row"):
                     yield Button("− VOL", id="btn-dj-volume-down", classes="knob-btn knob-vol")
                     yield Static("100%", id="dj-volume-display", classes="vol-display")
                     yield Button("+ VOL", id="btn-dj-volume-up", classes="knob-btn knob-vol")
-                yield Button("🚀 Launch Companion(s)...", id="btn-launch-Companion(s)")
+                yield Button("🚀 Launch agent...", id="btn-launch-agent")
 
         with Horizontal(id="controls"):
             yield Select(
@@ -3096,10 +3137,10 @@ class NewMetaTui(App):
                     ("💬 Chat", "chat"),
                     ("🧠 Plan", "plan"),
                     ("🔍 Review", "review"),
-                    ("🤖 Companion(s)", "Companion(s)"),
+                    ("🤖 Agent", "agent"),
                 ],
                 id="mode-select",
-                value="Companion(s)",
+                value="agent",
                 allow_blank=False,
             )
             yield Select(
@@ -3132,7 +3173,7 @@ class NewMetaTui(App):
         with Horizontal(id="tip-commands-row"):
             yield Static("", id="tip")
             yield Static(
-                no_wrap_text("⚡ /help · /clear · /files · /Pokemon · /gpu · /pika · /archon · /tools · /mcp · /skills · /reload"),
+                no_wrap_text("⚡ /help · /clear · /files · /model · /gpu · /pika · /archon · /tools · /mcp · /skills · /reload"),
                 id="commands-label", classes="pika-sep"
             )
 
@@ -3178,9 +3219,9 @@ class NewMetaTui(App):
                         yield Static(no_wrap_text(mephisto_mini_bar_markup()), id="mephisto-spark", classes="companion-spark")
 
             with ScrollableContainer(id="log-scroll"):
-                yield AgentLog(id="Companion(s)-log", wrap=True, highlight=True, markup=True)
+                yield AgentLog(id="agent-log", wrap=True, highlight=True, markup=True)
             with Vertical(id="sidebar"):
-                yield Static("", id="sidebar-Companion(s)")
+                yield Static("", id="sidebar-agent")
                 # DJ JOG WHEEL DECK (also carries the 🕹️ pads glyph, migrated
                 # up from the now-removed redundant sidebar pads-panel - the
                 # full pad grid still lives in the "Pads..." modal)
@@ -3197,7 +3238,7 @@ class NewMetaTui(App):
                             yield Button("▶▶", id="btn-dj-skip", classes="dj-knob-btn")
                         yield Static(no_wrap_text("🎵 stopped: (nothing)"), id="dj-now-playing")
 
-                yield ToolChecklist(id="Quest-log")
+                yield ToolChecklist(id="task-log")
                 yield RichLog(id="action-plan", wrap=True, markup=True)
                 yield RichLog(id="zap-log", wrap=True, markup=True)
                 yield RichLog(id="live-feed", wrap=True, markup=True)
@@ -3208,9 +3249,39 @@ class NewMetaTui(App):
             yield Button("🎤", id="prompt-mic-btn", tooltip="Voice input (same as /voice)")
             yield Button("☯ 🕹️", id="prompt-cycle-btn", tooltip="Cast the next spell in line, cycling through every companion's spell school")
             yield Button("SEND", id="prompt-send-btn")
+        yield Static(no_wrap_text(self.render_companion_footer()), id="companion-footer")
         footer_bindings = [(b.key, b.description) for b in self.BINDINGS if getattr(b, "show", True)]
         footer_bindings.append(("ctrl+p", "Palette"))
         yield NeonFooter(footer_bindings)
+
+    def render_companion_footer(self) -> str:
+        provider = self.provider_key or ""
+        active_by_provider = {v: k for k, v in self.COMPANION_PROVIDER_MAP.items()}
+        active_key = active_by_provider.get(provider, "turtle" if provider.startswith("codex") else "")
+        state = "ACTIVE" if self.busy else "READY"
+        labels = {
+            "turtle": ("🛡️", "Turtle", "Codex", "#38bdf8"),
+            "pikapoke": ("🗝️", "Pika", "Gemini", "#ccff00"),
+            "zouzou": ("🔥", "Zouzou", "Claude", "#c4b5fd"),
+            "mephissa": ("🎧", "Mephissa", "Audio", "#ff2fd6"),
+            "mephisto": ("⚡", "Mephisto", "Router", "#e11d48"),
+        }
+        chips = []
+        for key in self.COMPANION_KEYS:
+            icon, name, domain, color = labels[key]
+            mode = load_mode(key) if has_mode(key) else "unset"
+            mark = "☑" if key == active_key else "☒"
+            status = state if key == active_key else "IDLE"
+            chips.append(f"[bold {color}]{mark} {icon} {name}[/bold {color}] [dim]{domain}:{mode}:{status}[/dim]")
+        guard = "ON" if getattr(self, "auto_approval_enabled", False) else "OFF"
+        return "  ".join(chips) + f"  [bold #ffff00]GUARD {guard}[/bold #ffff00]"
+    def refresh_companion_footer(self) -> None:
+        try:
+            self.query_one("#companion-footer", Static).update(
+                no_wrap_text(self.render_companion_footer())
+            )
+        except Exception:
+            pass
 
     def on_mount(self) -> None:
         self._sync_buttons()
@@ -3222,7 +3293,7 @@ class NewMetaTui(App):
                 self._start_price_fetcher()
             else:
                 self.screen.add_class("theme-coding")
-            launch_btn = self.query_one("#btn-launch-Companion(s)", Button)
+            launch_btn = self.query_one("#btn-launch-agent", Button)
             launch_btn.styles.background = "#ff023a" if self.engine_mode == "trading" else "#ccff00"
             launch_btn.styles.color = "#F8F9FA" if self.engine_mode == "trading" else "#050505"
         except Exception:
@@ -3240,7 +3311,7 @@ class NewMetaTui(App):
             self.query_one("#card-mephisto").border_title = "PIKA MEPHISTO"
             self.query_one("#card-mephisto").border_subtitle = self._house_tag("mephisto", "⚡ ROUTE")
             self._refresh_companion_selection()
-            self.query_one("#Quest-log", ToolChecklist).border_title = "▶ ONGOING"
+            self.query_one("#task-log", ToolChecklist).border_title = "▶ ONGOING"
             self.query_one("#action-plan", RichLog).border_title = "📋 ACTION PLAN"
             self.query_one("#zap-log", RichLog).border_title = "✓ COMPLETED"
             self.query_one("#live-feed", RichLog).border_title = "⚡ LIVE FEED"
@@ -3258,6 +3329,7 @@ class NewMetaTui(App):
         self.set_interval(5.0, self.rotate_tip)
         self.set_interval(30.0, self._refresh_trading_setup)
         self.set_interval(0.2, self._dj_beat_tick)
+        self.set_interval(2.0, self.refresh_companion_footer)
         self.rotate_tip()
 
         # Focus the chat input last, after Textual's own initial-focus
@@ -3532,27 +3604,30 @@ class NewMetaTui(App):
         if now - self._last_esc_time < 1.5:
             if self.busy:
                 self.busy = False
-                self.log_line("\n[bold red]⛔ Companion(s) OPERATION ABORTED BY ESC x2![/bold red]")
+                self.log_line("\n[bold red]⛔ AGENT OPERATION ABORTED BY ESC x2![/bold red]")
                 self.set_status(f"ABORTED | {self.provider_label}")
             else:
-                self.log_line("\n[bold red]⛔ Abort triggered (Companion(s) was idle).[/bold red]")
+                self.log_line("\n[bold red]⛔ Abort triggered (agent was idle).[/bold red]")
             self._last_esc_time = 0.0
         else:
             self._last_esc_time = now
             if self.busy:
-                self.log_line("\n[bold yellow]⚡ ESC Slap! Nudging Companion(s)... (Press ESC again within 1.5s to abort)[/bold yellow]")
+                self.log_line("\n[bold yellow]⚡ ESC Slap! Nudging agent... (Press ESC again within 1.5s to abort)[/bold yellow]")
             else:
-                self.log_line("\n[bold yellow]⚡ ESC Slap! Companion(s) is ready. (Press ESC twice to abort)[/bold yellow]")
+                self.log_line("\n[bold yellow]⚡ ESC Slap! Agent is ready. (Press ESC twice to abort)[/bold yellow]")
 
     def action_copy_log(self) -> None:
         import pyperclip
         try:
-            log = self.query_one("#Companion(s)-log", AgentLog)
+            log = self.query_one("#agent-log", AgentLog)
             text = "\n".join(log._plain_lines)
             pyperclip.copy(text)
             self.log_line("[bold yellow]📋 Entire chat log copied to clipboard.[/bold yellow]")
         except Exception as e:
-            self.log_line(f"[bold red]❌ Fed First Blood to copy log: {e}[/bold red]")
+            self.log_line(f"[bold red]❌ Failed to copy log: {e}[/bold red]")
+
+    def action_rikimaru_vanish(self) -> None:
+        self.action_paste_clipboard()
 
     def action_paste_clipboard(self) -> None:
         from explorer import describe_clipboard_payload, play_sfx
@@ -3607,25 +3682,25 @@ class NewMetaTui(App):
         # One-off note (e.g. the malformed-tool-call repair warning) rather
         # than a real tracked tool call - gets its own throwaway id so it
         # doesn't collide with add_pending()/mark_done() pairs.
-        self.query_one("#Quest-log", ToolChecklist).add_pending(f"note-{time.time()}", _short_bullet(text))
+        self.query_one("#task-log", ToolChecklist).add_pending(f"note-{time.time()}", _short_bullet(text))
 
     def log_task_plan(self, text: str) -> None:
         self.query_one("#action-plan", RichLog).write(f"[cyan]☐[/cyan] {_short_bullet(text)}")
 
     def _reset_task_checklist(self) -> None:
-        self.query_one("#Quest-log", ToolChecklist).reset()
+        self.query_one("#task-log", ToolChecklist).reset()
 
     def _checklist_add(self, item_id: str, label: str) -> None:
-        self.query_one("#Quest-log", ToolChecklist).add_pending(item_id, label)
+        self.query_one("#task-log", ToolChecklist).add_pending(item_id, label)
 
     def _checklist_done(self, item_id: str, ok: bool) -> None:
-        self.query_one("#Quest-log", ToolChecklist).mark_done(item_id, ok)
+        self.query_one("#task-log", ToolChecklist).mark_done(item_id, ok)
 
     def _update_sidebar_agent(self) -> None:
         try:
             key = self.COMPANION_KEYS[self._companion_selected_idx]
             companion_name = SUMMONS[key].name
-            self.query_one("#sidebar-Companion(s)", Static).update(
+            self.query_one("#sidebar-agent", Static).update(
                 f"[bold #ccff00]{companion_name}[/bold #ccff00]\n"
                 f"{self.provider_label} | mode={self.mode} | think={self.thinking_level}"
             )
@@ -3642,6 +3717,7 @@ class NewMetaTui(App):
 
     def set_status(self, text: str) -> None:
         self.query_one("#status-bar", Static).update(text)
+        self.refresh_companion_footer()
 
     def sync_request_permission(self, tool_name: str, target: str) -> str:
         """Called by cli.py's _authorize_tool from the agent worker thread
@@ -3663,7 +3739,7 @@ class NewMetaTui(App):
         return result[0] if result else "deny"
 
     def log_line(self, text: str) -> None:
-        log = self.query_one("#Companion(s)-log", RichLog)
+        log = self.query_one("#agent-log", RichLog)
         try:
             log.write(text)
         except Exception:
@@ -3704,7 +3780,7 @@ class NewMetaTui(App):
             return
         self.provider_key = name
         pconf = self.config.get("providers", {}).get(name, {})
-        self.provider_label = f"🤖 {name} / {pconf.get('Pokemon') or '?'}"
+        self.provider_label = f"🤖 {name} / {pconf.get('model') or '?'}"
         self.set_status(f"READY | {self.provider_label} | mode={self.mode} | tools: mcp={self.include_mcp} skills={self.include_skills} core={self.include_core}")
         self._update_sidebar_agent()
         try:
@@ -3847,7 +3923,7 @@ class NewMetaTui(App):
             self.set_timer(0.25, lambda: btn.remove_class("-active"))
             self.cast_macro(key, action)
             return
-        if btn.id == "btn-launch-Companion(s)":
+        if btn.id == "btn-launch-agent":
             self.push_screen(ModelPickerScreen(self._agent_options()), self._on_agent_picked)
         elif btn.id == "btn-theme-picker":
             names = list(PALETTE_THEMES.keys())
@@ -4031,7 +4107,7 @@ class NewMetaTui(App):
         except Exception:
             pass
         try:
-            launch_btn = self.query_one("#btn-launch-Companion(s)", Button)
+            launch_btn = self.query_one("#btn-launch-agent", Button)
             launch_btn.styles.background = "#ff023a" if self.engine_mode == "trading" else "#ccff00"
             launch_btn.styles.color = "#F8F9FA" if self.engine_mode == "trading" else "#050505"
         except Exception:
@@ -4045,7 +4121,7 @@ class NewMetaTui(App):
             self.log_line('[dim]Add a card from anywhere: python C:\\Users\\youha\\.claude\\companion_kit\\board.py '
                            'add "title" [backlog|in_progress|done][/dim]')
         except Exception as e:
-            self.log_line(f"[bold red]❌ Raid Wipe rendering project board: {e}[/bold red]")
+            self.log_line(f"[bold red]❌ Error rendering project board: {e}[/bold red]")
 
     def show_spellbook_progress(self) -> None:
         self.log_line("[bold #a78bfa]============================================================[/bold #a78bfa]")
@@ -4106,7 +4182,7 @@ class NewMetaTui(App):
                 self.call_from_thread(self.log_line, line)
             self.call_from_thread(self.log_line, "[bold #yellow]============================================================[/bold #yellow]")
         except Exception as e:
-            self.call_from_thread(self.log_line, f"[bold red]❌ Raid Wipe rendering Mephisto alerts: {e}[/bold red]")
+            self.call_from_thread(self.log_line, f"[bold red]❌ Error rendering Mephisto alerts: {e}[/bold red]")
 
     @work(thread=True)
     def show_mephisto_tweets(self) -> None:
@@ -4150,7 +4226,7 @@ class NewMetaTui(App):
                 log("")
             log("[bold #e11d48]============================================================[/bold #e11d48]")
         except Exception as e:
-            self.call_from_thread(self.log_line, f"[bold red]❌ Raid Wipe loading Mephisto signals: {e}[/bold red]")
+            self.call_from_thread(self.log_line, f"[bold red]❌ Error loading Mephisto signals: {e}[/bold red]")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "provider-select" and event.value:
@@ -4188,7 +4264,7 @@ class NewMetaTui(App):
         if prompt.lower() in ("/tweets", "/signals", "tweets", "signals", "pump dump", "buy sell"):
             self.show_mephisto_tweets()
             return
-        if prompt.lower() in ("/Pokemon", "/Pokemon", "/Companion(s)", "/Companion(s)"):
+        if prompt.lower() in ("/model", "/models", "/agent", "/agents"):
             self.push_screen(ModelPickerScreen(self._agent_options()), self._on_agent_picked)
             return
         if prompt.lower() in ("/session", "/sessions"):
@@ -4196,6 +4272,15 @@ class NewMetaTui(App):
             return
         if prompt.lower() in ("/spell", "/spells"):
             self.show_spellbook_progress()
+            return
+        if prompt.lower() in ("/switch", "/invoker"):
+            self.toggle_invoker_mode()
+            return
+        if prompt.lower() in ("/coder",):
+            self.set_invoker_mode(False)
+            return
+        if prompt.lower() in ("/mage", "/mage invoker", "/invoker on"):
+            self.set_invoker_mode(True)
             return
         if prompt.lower() in ("/board", "/boards", "/project"):
             self.push_screen(BoardScreen())
@@ -4229,7 +4314,7 @@ class NewMetaTui(App):
                 self.log_line(f"[bold yellow]📎 File Attached via Drag & Drop:[/bold yellow] {filename} ({len(content)} chars)")
                 return
             except Exception as e:
-                self.log_line(f"[bold red]❌ Fed First Blood to attach dropped file: {e}[/bold red]")
+                self.log_line(f"[bold red]❌ Failed to attach dropped file: {e}[/bold red]")
                 return
 
         if prompt.lower() in ("exit", "quit"):
@@ -4264,8 +4349,8 @@ class NewMetaTui(App):
             directives.append("Plan mode: outline steps and files, do NOT execute tools yet.")
         elif self.mode == "review":
             directives.append("Review mode: analyze code and report findings, do NOT modify anything.")
-        elif self.mode == "Companion(s)":
-            directives.append("Companion(s) mode: use tools automatically to complete the Quest end-to-end.")
+        elif self.mode == "agent":
+            directives.append("Agent mode: use tools automatically to complete the task end-to-end.")
         else:
             directives.append("Chat mode: answer directly; use tools only if genuinely needed.")
 
@@ -4297,6 +4382,7 @@ class NewMetaTui(App):
         self.busy = True
         self._stream_buffer = ""
         self.call_from_thread(self._reset_task_checklist)
+        self.call_from_thread(self.refresh_companion_footer)
         self.call_from_thread(self.set_status, f"THINK | {self.provider_label} | mode={self.mode}")
         # USER CHAT TEXT: WHITE PURPLE (#d8b4fe)
         self.call_from_thread(self.log_line, f"\n[bold #d8b4fe]» {user_prompt}[/bold #d8b4fe]")
@@ -4305,7 +4391,7 @@ class NewMetaTui(App):
         cli.set_active_agent_context(self.provider, self.config, self.secrets)
 
         system_content = (
-            f"You are PIKA POKE, the permanent Tiger-Lion Invoker Archon. You are a highly advanced AI developer "
+            f"You are PIKA POKE, the permanent Tiger-Lion Hacker Archon. You are a highly advanced AI developer "
             f"companion. Greet briefly as PIKA POKE and show your presence. Run commands and tools as needed. "
             f"Your active mode is {self.mode}."
         )
@@ -4369,7 +4455,7 @@ class NewMetaTui(App):
                 self.call_from_thread(self.flush_stream_buffer)
 
                 if not self.busy:
-                    self.call_from_thread(self.log_line, "\n[bold red]⛔ Companion(s) operation cancelled by user abort.[/bold red]")
+                    self.call_from_thread(self.log_line, "\n[bold red]⛔ Agent operation cancelled by user abort.[/bold red]")
                     break
 
                 # UNIVERSAL REACT FALLBACK: no structured tool_calls came back
@@ -4452,7 +4538,7 @@ class NewMetaTui(App):
                 for (k, tc), r in zip(pending_tool_calls.items(), results):
                     tool_name = tc.get("name") or r.get("tool", "?")
                     result_text = str(r.get("result", ""))
-                    ok = not result_text.startswith(("[Raid Wipe]", "[PERMISSION DENIED]", "[PLAN MODE]"))
+                    ok = not result_text.startswith(("[ERROR]", "[PERMISSION DENIED]", "[PLAN MODE]"))
                     if ok:
                         round_ok_count += 1
                     # Kept in sync with ToolChecklist.mark_done()'s glyphs.
@@ -4519,7 +4605,7 @@ class NewMetaTui(App):
                 self.call_from_thread(self.log_line, "[dim](no text output)[/dim]")
         except Exception as e:
             self.call_from_thread(self.flush_stream_buffer)  # don't lose whatever streamed in before the error
-            self.call_from_thread(self.log_line, f"[bold red]❌ Raid Wipe:[/bold red] {e}")
+            self.call_from_thread(self.log_line, f"[bold red]❌ Error:[/bold red] {e}")
             self.call_from_thread(self.set_status, f"ERR | {self.provider_label}")
         finally:
             self.messages = messages[1:]
@@ -4538,6 +4624,7 @@ class NewMetaTui(App):
             except Exception:
                 pass
             self.busy = False
+            self.call_from_thread(self.refresh_companion_footer)
 
     @work(exclusive=True, thread=True)
     def voice_worker(self, duration: int = 5) -> None:
@@ -4627,7 +4714,7 @@ class NewMetaTui(App):
                     except Exception:
                         continue
             except Exception as e:
-                self.call_from_thread(self.log_line, f"[bold red]❌ Fed First Blood to launch resume dashboard: {e}[/bold red]")
+                self.call_from_thread(self.log_line, f"[bold red]❌ Failed to launch resume dashboard: {e}[/bold red]")
                 return
         else:
             self.call_from_thread(self.log_line, "[dim]Resume Dashboard already running[/dim]")
@@ -4641,6 +4728,241 @@ class NewMetaTui(App):
             inp.focus()
         except Exception:
             pass
+
+
+class Gpt5MiniScreen(Screen):
+    """Real Copilot-CLI-style screen for gpt-5-mini/mini-5-gpt: TabbedContent
+    gives genuinely clickable, keyboard-navigable tabs (Textual's built-in
+    mouse-tracking + alternate-screen redraw loop - the same category of
+    engine Ink/opencode use to render real tab buttons), not a printed ANSI
+    approximation. Deliberately self-contained (no dependency on
+    NewMetaTui's state) so it can be pushed as a screen inside the main
+    dashboard later without rework, per the planned left-side merge."""
+
+    CSS = """
+    Gpt5MiniScreen {
+        background: #000000;
+    }
+    Tabs Tab {
+        background: #2e2e2e;
+        color: #4fc3f7;
+    }
+    Tabs Tab.-active {
+        background: #4fc3f7;
+        color: #000000;
+        text-style: bold;
+    }
+    #gpt5mini-log {
+        height: 1fr;
+        background: #0c0c0c;
+        border: none;
+    }
+    #gpt5mini-input {
+        dock: bottom;
+        background: #141414;
+        border: none;
+    }
+    #mcp-status {
+        padding: 1 2;
+        color: #d0d0d0;
+    }
+    #mcp-buttons {
+        height: 3;
+        padding: 0 2;
+    }
+    #mcp-buttons Button { margin: 0 1; }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+c", "quit_app", "Quit", show=True),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = cli.load_config()
+        self.secrets = cli.SecureStorage(cli.SECRETS_PATH)
+        self.config.setdefault("providers", {}).setdefault("g4f", {})["model"] = "gpt-5-mini"
+        self.provider = cli.get_provider("g4f", self.config, self.secrets)
+        self.messages = [{"role": "system", "content": "You are NewMeta, a helpful coding assistant."}]
+        self.mcp_profile = "coder"
+        self._stream_buffer = ""
+
+    def compose(self) -> ComposeResult:
+        with TabbedContent(initial="tab-current"):
+            with TabPane("Current", id="tab-current"):
+                yield RichLog(id="gpt5mini-log", markup=True, wrap=True)
+                yield Input(placeholder="What would you like to do?", id="gpt5mini-input")
+            with TabPane("Sessions", id="tab-sessions"):
+                yield DataTable(id="sessions-table")
+            with TabPane("Models", id="tab-models"):
+                yield DataTable(id="models-table")
+            with TabPane("MCP", id="tab-mcp"):
+                yield Static("", id="mcp-status")
+                with Horizontal(id="mcp-buttons"):
+                    yield Button("coder", id="mcp-btn-coder")
+                    yield Button("trader", id="mcp-btn-trader")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        cli.set_permission_prompt_handler(self.sync_request_permission)
+        log = self.query_one("#gpt5mini-log", RichLog)
+        log.write("[bold #4fc3f7]NewMeta[/] v1.0 uses AI. Check for mistakes.")
+        self.query_one("#gpt5mini-input", Input).focus()
+        self._populate_sessions()
+        self._populate_models()
+        self._refresh_mcp_status(loading=True)
+        self._load_mcp_worker()
+
+    @work(thread=True)
+    def _load_mcp_worker(self) -> None:
+        cli.load_mcp_servers(self.config, profile=self.mcp_profile)
+        self.call_from_thread(self._refresh_mcp_status)
+
+    def _populate_sessions(self) -> None:
+        table = self.query_one("#sessions-table", DataTable)
+        table.add_columns("ID", "Name", "Provider")
+        sm = cli.SessionManager(cli.SESSIONS_DIR)
+        for s in sm.list():
+            table.add_row(s["id"][:8], s.get("name", "(unnamed)"), s.get("provider", "?"))
+
+    def _populate_models(self) -> None:
+        table = self.query_one("#models-table", DataTable)
+        table.add_columns("ID", "Name", "Description")
+        am = cli.AgentManager(cli.AGENTS_DIR)
+        for row in cli.get_numbered_agents(am):
+            table.add_row(str(row["id"]), row["name"], row["description"])
+
+    def _refresh_mcp_status(self, loading: bool = False) -> None:
+        servers = cli.mcp_tools_by_server(self.config, self.mcp_profile)
+        suffix = " (loading...)" if loading else ""
+        self.query_one("#mcp-status", Static).update(
+            f"Active profile: {self.mcp_profile}{suffix}\nServers: {', '.join(servers) or '(none)'}"
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mcp-btn-coder":
+            self._switch_mcp_profile("coder")
+        elif event.button.id == "mcp-btn-trader":
+            self._switch_mcp_profile("trader")
+
+    def _switch_mcp_profile(self, profile: str) -> None:
+        self.mcp_profile = profile
+        cli.unregister_mcp_tools()
+        self._refresh_mcp_status(loading=True)
+        self._load_mcp_worker()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "gpt5mini-input":
+            return
+        text = event.value.strip()
+        event.input.value = ""
+        if not text:
+            return
+        log = self.query_one("#gpt5mini-log", RichLog)
+        log.write(f"[#4fc3f7]➤[/] {text}")
+        self.messages.append({"role": "user", "content": text})
+        self.run_agent_worker()
+
+    def sync_request_permission(self, tool_name: str, target: str) -> str:
+        """Same threading.Event bridge NewMetaTui.sync_request_permission
+        uses - the worker thread blocks, the modal is answered on the UI
+        thread, cli.py's _authorize_tool never touches input()."""
+        event = threading.Event()
+        result: list[str] = []
+
+        def _push() -> None:
+            def _on_dismiss(answer: str | None) -> None:
+                result.append(answer or "deny")
+                event.set()
+            self.app.push_screen(PermissionPromptScreen(tool_name, target), _on_dismiss)
+
+        self.call_from_thread(_push)
+        event.wait()
+        return result[0] if result else "deny"
+
+    def log_stream_chunk(self, text: str) -> None:
+        self._stream_buffer += text
+        if "\n" in self._stream_buffer:
+            *complete, self._stream_buffer = self._stream_buffer.split("\n")
+            log = self.query_one("#gpt5mini-log", RichLog)
+            for line in complete:
+                log.write(line)
+
+    def flush_stream_buffer(self) -> None:
+        if self._stream_buffer:
+            self.query_one("#gpt5mini-log", RichLog).write(self._stream_buffer)
+            self._stream_buffer = ""
+
+    def log_line_safe(self, text: str) -> None:
+        try:
+            self.query_one("#gpt5mini-log", RichLog).write(text)
+        except Exception:
+            pass
+
+    @work(thread=True)
+    def run_agent_worker(self) -> None:
+        cli.set_active_agent_context(self.provider, self.config, self.secrets)
+        schema = cli.get_tools_schema()
+        system_msg = self.messages[0]
+        if schema and "tool_call" not in (system_msg.get("content") or ""):
+            react_prompt = cli.build_react_tool_prompt(schema)
+            if react_prompt:
+                system_msg["content"] += "\n\n" + react_prompt
+
+        kwargs = {"temperature": 0.7}
+        provider_label = "gpt-5-mini"
+        react_repair_attempts = 0
+        try:
+            for _ in range(8):
+                response = self.provider.chat(self.messages, stream=True, **kwargs)
+                round_text = ""
+                for chunk in response:
+                    if isinstance(chunk, str):
+                        token = chunk
+                    elif chunk.choices and getattr(chunk.choices[0].delta, "content", None):
+                        token = chunk.choices[0].delta.content
+                    else:
+                        token = None
+                    if token:
+                        round_text += token
+                        self.call_from_thread(self.log_stream_chunk, token)
+                self.call_from_thread(self.flush_stream_buffer)
+
+                calls, errors = cli.parse_react_tool_calls_detailed(round_text)
+                if calls:
+                    cli.record_tool_call_outcome(provider_label, "react")
+                    self.messages.append({"role": "assistant", "content": round_text})
+                    results = cli.run_tools(calls)
+                    for r in results:
+                        self.call_from_thread(self.log_line_safe, f"[dim][TOOL] {r['tool']}: {str(r['result'])[:200]}[/]")
+                    self.messages.append({
+                        "role": "user",
+                        "content": "Tool results:\n" + "\n".join(f"{r['tool']}: {r['result']}" for r in results),
+                    })
+                    continue
+                elif errors and react_repair_attempts < 2:
+                    react_repair_attempts += 1
+                    self.messages.append({"role": "assistant", "content": round_text})
+                    self.messages.append({"role": "user", "content": cli.format_react_repair_prompt(errors)})
+                    continue
+                if round_text.strip():
+                    self.messages.append({"role": "assistant", "content": round_text})
+                break
+        except Exception as e:
+            self.call_from_thread(self.log_line_safe, f"[red][ERROR] {e}[/]")
+
+    def action_quit_app(self) -> None:
+        self.app.exit()
+
+
+class Gpt5MiniApp(App):
+    """Standalone launcher for the gpt-5-mini / mini-5-gpt Copilot-CLI-style
+    screen - the same Screen class this gets pushed into inside NewMetaTui
+    once the left-side merge happens, so nothing here is throwaway."""
+    TITLE = "gpt-5-mini"
+
+    def on_mount(self) -> None:
+        self.push_screen(Gpt5MiniScreen())
 
 
 def main():
@@ -4658,3 +4980,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
